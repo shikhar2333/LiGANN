@@ -84,12 +84,6 @@ opt = parser.parse_args()
 # In[73]:
 
 
-# define weight initialization
-def weights_init(m):
-    if isinstance(m, nn.Conv3d) or isinstance(m, nn.Linear):
-        init.xavier_uniform_(m.weight.data)
-
-
 # In[74]:
 
 
