@@ -2,6 +2,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
+from torch.nn import init
 import numpy as np
 from torchvision.models import resnet18
 
@@ -23,17 +24,25 @@ class UNetDown(nn.Module):
         return self.model(x)
 
 class UNetUp(nn.Module):
-    def __init__(self, in_size, out_size):
+    def __init__(self, in_size, out_size, fraction=False):
         super(UNetUp, self).__init__()
+#         scale = 1.5 if fraction else 2
         self.model = nn.Sequential(
             nn.Upsample(scale_factor=2),
             nn.Conv3d(in_size, out_size, kernel_size=3, stride=1, padding=1, bias=False),
             nn.BatchNorm3d(out_size, 0.8),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=True)
         )
+        self.upsample = nn.Upsample(scale_factor=2)
 
     def forward(self, x, skip_input):
+        # print("old x shape: ", x.shape) 
         x = self.model(x)
+        skip_input = self.upsample(skip_input)
+        padding = (x.shape[2] - skip_input.shape[2])//2
+        p3d = (padding, padding, padding, padding, padding, padding)
+        skip_input = F.pad(skip_input, p3d, "constant", 0)
+        # print(x.shape, skip_input.shape)
         x = torch.cat((x, skip_input), 1)
         return x
 
@@ -47,61 +56,128 @@ class Generator(nn.Module):
         self.reshape_z = nn.Linear(latent_dim, self.h*self.w*self.d)
 
         ## Downsampling Layers
-        self.downsample1 = UNetDown(voxel_channels+1, 64, normalize=False)
-        self.downsample2 = UNetDown(64, 128)
-        self.downsample3 = UNetDown(128, 256)
-        self.downsample4 = UNetDown(256, 512)
-        self.downsample5 = UNetDown(512, 512)
-        self.downsample6 = UNetDown(512, 512)
-        self.downsample7 = UNetDown(512, 512, normalise=False)
+        self.downsample1 = UNetDown(voxel_channels+1, 32, normalize=False)
+        self.downsample2 = UNetDown(32, 64)
+        self.downsample3 = UNetDown(64, 64)
+        self.downsample4 = UNetDown(64, 128)
+#         self.downsample5 = UNetDown(128, 128)
+#         self.downsample6 = UNetDown(128, 128, normalize=False)
+#         self.downsample7 = UNetDown(128, 128, normalize=False)
         
         ## Transpose earlier kernels
-        self.upsample1 = UNetUp(512, 512)
-        self.upsample2 = UNetUp(1024, 512)
-        self.upsample3 = UNetUp(1024, 512)
-        self.upsample4 = UNetUp(1024, 256)
-        self.upsample5 = UNetUp(512, 128)
-        self.upsample6 = UNetUp(256, 64)
+        self.upsample1 = UNetUp(128, 64, fraction=True)
+        self.upsample2 = UNetUp(128, 64)
+        self.upsample3 = UNetUp(128, 64)
+#         self.upsample4 = UNetUp(128, 32)
+#         self.upsample5 = UNetUp(128, 64)
+#         self.upsample6 = UNetUp(128, 32)
 
         self.final = nn.Sequential(
-            nn.Upsample(scale_factor=2), nn.Conv3d(128, voxel_channels, kernel_size=3, stride=1, padding=1), nn.Tanh()
+            nn.Upsample(scale_factor=2), nn.Conv3d(96, voxel_channels, kernel_size=3, stride=1, padding=1), nn.Tanh()
         ) 
     
     def forward(self, x, z):
-        z = self.reshape_z(z).reshape(z.size(0), 1, self.h, self.w, self.d)
+        z = self.reshape_z(z).view(z.size(0), 1, self.h, self.w, self.d)
+        # print("Z shape: ", z.shape)
         d1 = self.downsample1( torch.cat((x, z), 1) )
+        print("d1 shape: ", d1.shape)
         d2 = self.downsample2(d1)
+        print("d2 shape: ", d2.shape)
         d3 = self.downsample3(d2)
+        print("d3 shape: ", d3.shape)
         d4 = self.downsample4(d3)
-        d5 = self.downsample5(d4)
-        d6 = self.downsample6(d5)
-        d7 = self.downsample7(d6)
-        u1 = self.upsample1(d7, d6)
-        u2 = self.upsample2(u1, d5)
-        u3 = self.upsample3(u2, d4)
-        u4 = self.upsample4(u3, d3)
-        u5 = self.upsample5(u4, d2)
-        u6 = self.upsample6(u5, d1)
+        print("d4 shape: ", d4.shape)
+#         d5 = self.downsample5(d4)
+#         print("d5 shape: ", d5.shape)
+#         d6 = self.downsample6(d5)
+        # print("d6 shape: ", d6.shape)
+#         d7 = self.downsample7(d6)
+        # print("d7 shape: ", d7.shape)
 
-        return self.final(u6)
+        u1 = self.upsample1(d4, d3)
+        print("u1 shape: ",u1.shape)
+        u2 = self.upsample2(u1, d2)
+        print("u2 shape: ", u2.shape)
+        u3 = self.upsample3(u2, d1)
+        print("u3 shape: ", u3.shape)
+#         u4 = self.upsample4(u3, d1)
+#         print("u4 shape: ", u4.shape)
+#         u5 = self.upsample5(u4, d2)
+#         u6 = self.upsample6(u5, d1)
+#         print("u4 shape: ", u4.shape)
+        return self.final(u3)
+#         return 0
+
+
+# class Encoder(nn.Module):
+#     def __init__(self, latent_dim, input_shape):
+#         super(Encoder, self).__init__()
+#         resnet18_model = resnet18(pretrained=False)
+#         self.feature_extractor = nn.Sequential(*list(resnet18_model.children())[:-3])
+#         self.pooling = nn.AvgPool3d(kernel_size=8, stride=8, padding=0)
+#         # Output is mu and log(var) for reparameterization trick used in VAEs
+#         self.fc_mu = nn.Linear(256, latent_dim)
+#         self.fc_logvar = nn.Linear(256, latent_dim)
+
+#     def forward(self, img):
+#         out = self.feature_extractor(img)
+#         out = self.pooling(out)
+#         out = out.view(out.size(0), -1)
+#         mu = self.fc_mu(out)
+#         logvar = self.fc_logvar(out)
+#         return mu, logvar
+
+def fetch_simple_block3d(in_lay, out_lay, nl, norm_layer, stride=1, kw=3, padw=1):
+    return [nn.Conv3d(in_lay, out_lay, kernel_size=kw, stride=stride, padding=padw)]
 
 class Encoder(nn.Module):
-    def __init__(self, latent_dim, input_shape):
+    """
+    E network of 3D-BicycleGAN
+    """
+    def __init__(self, input_nc=14, output_nc=8, ndf=64,
+                 norm_layer='instance', nl_layer=None, gpu_ids=[], vaeLike=False):
         super(Encoder, self).__init__()
-        resnet18_model = resnet18(pretrained=False)
-        self.feature_extractor = nn.Sequential(*list(resnet18_model.children())[:-3])
-        self.pooling = nn.AvgPool3d(kernel_size=8, stride=8, padding=0)
-        # Output is mu and log(var) for reparameterization trick used in VAEs
-        self.fc_mu = nn.Linear(256, latent_dim)
-        self.fc_logvar = nn.Linear(256, latent_dim)
+        self.gpu_ids = gpu_ids
+        self.vaeLike = vaeLike
 
-    def forward(self, img):
-        out = self.feature_extractor(img)
-        out = self.pooling(out)
-        out = out.view(out.size(0), -1)
-        mu = self.fc_mu(out)
-        logvar = self.fc_logvar(out)
-        return mu, logvar
+        nf_mult = 1
+        kw, padw = 3, 1
+
+        # Network
+        sequence = [nn.Conv3d(input_nc, ndf, kernel_size=kw,
+                              stride=1, padding=padw)]
+        # Repeats
+        sequence.extend(fetch_simple_block3d(ndf, ndf * 2, nl=nl_layer, norm_layer=norm_layer))
+        sequence.append(nn.AvgPool3d(2, 2))
+
+        sequence.extend(fetch_simple_block3d(ndf * 2, ndf * 2, nl=nl_layer, norm_layer=norm_layer))
+        sequence.append(nn.AvgPool3d(2, 2))
+
+        sequence.extend(fetch_simple_block3d(ndf * 2, ndf * 4, nl=nl_layer, norm_layer=norm_layer))
+        sequence.append(nn.AvgPool3d(2, 2))
+
+        sequence.extend(fetch_simple_block3d(ndf * 4, ndf * 4, nl=nl_layer, norm_layer=norm_layer))
+        sequence += [nn.AvgPool3d(kernel_size=3,stride=2)]
+        sequence += [nn.AvgPool3d(kernel_size=2)]
+        
+#         sequence.extend(fetch_simple_block3d(ndf * 4, ndf * 4, nl=nl_layer, norm_layer=norm_layer))
+#         sequence += [nn.AvgPool3d(kernel_size=3,stride=2)]
+        
+        self.conv = nn.Sequential(*sequence)
+        self.fc = nn.Sequential(*[nn.Linear(ndf * 4, output_nc)])
+        if vaeLike:
+            self.fcVar = nn.Sequential(*[nn.Linear(ndf * 4, output_nc)])
+
+    def forward(self, x):
+        x_conv = self.conv(x)
+        # print("x_conv shape: ", x_conv.shape)
+        conv_flat = x_conv.view(x.size(0), -1)
+
+        output = self.fc(conv_flat)
+        if self.vaeLike:
+            outputVar = self.fcVar(conv_flat)
+            return output, outputVar
+        return output
 
 
 class MultiDiscriminator(nn.Module):
@@ -115,8 +191,8 @@ class MultiDiscriminator(nn.Module):
                 layers.append(nn.BatchNorm3d(out_filters, 0.8))
             layers.append(nn.LeakyReLU(0.2))
             return layers
-
-        channels, _, _ = input_shape
+        # print(input_shape)
+        channels, _, _, _ = input_shape
         # Extracts discriminator models
         self.models = nn.ModuleList()
         for i in range(3):
