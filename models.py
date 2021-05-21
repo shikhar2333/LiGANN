@@ -80,13 +80,13 @@ class Generator(nn.Module):
         z = self.reshape_z(z).view(z.size(0), 1, self.h, self.w, self.d)
         # print("Z shape: ", z.shape)
         d1 = self.downsample1( torch.cat((x, z), 1) )
-        print("d1 shape: ", d1.shape)
+#         print("d1 shape: ", d1.shape)
         d2 = self.downsample2(d1)
-        print("d2 shape: ", d2.shape)
+#         print("d2 shape: ", d2.shape)
         d3 = self.downsample3(d2)
-        print("d3 shape: ", d3.shape)
+#         print("d3 shape: ", d3.shape)
         d4 = self.downsample4(d3)
-        print("d4 shape: ", d4.shape)
+#         print("d4 shape: ", d4.shape)
 #         d5 = self.downsample5(d4)
 #         print("d5 shape: ", d5.shape)
 #         d6 = self.downsample6(d5)
@@ -95,11 +95,11 @@ class Generator(nn.Module):
         # print("d7 shape: ", d7.shape)
 
         u1 = self.upsample1(d4, d3)
-        print("u1 shape: ",u1.shape)
+#         print("u1 shape: ",u1.shape)
         u2 = self.upsample2(u1, d2)
-        print("u2 shape: ", u2.shape)
+#         print("u2 shape: ", u2.shape)
         u3 = self.upsample3(u2, d1)
-        print("u3 shape: ", u3.shape)
+#         print("u3 shape: ", u3.shape)
 #         u4 = self.upsample4(u3, d1)
 #         print("u4 shape: ", u4.shape)
 #         u5 = self.upsample5(u4, d2)
@@ -186,7 +186,7 @@ class MultiDiscriminator(nn.Module):
 
         def discriminator_block(in_filters, out_filters, normalize=True):
             """Returns downsampling layers of each discriminator block"""
-            layers = [nn.Conv3d(in_filters, out_filters, 4, stride=2, padding=1)]
+            layers = [nn.Conv3d(in_filters, out_filters, kernel_size=3, stride=2, padding=1)]
             if normalize:
                 layers.append(nn.BatchNorm3d(out_filters, 0.8))
             layers.append(nn.LeakyReLU(0.2))
@@ -199,29 +199,29 @@ class MultiDiscriminator(nn.Module):
             self.models.add_module(
                 "disc_%d" % i,
                 nn.Sequential(
-                    *discriminator_block(channels, 64, normalize=False),
+                    *discriminator_block(channels, 32, normalize=False),
+                    *discriminator_block(32, 64),
                     *discriminator_block(64, 128),
-                    *discriminator_block(128, 256),
-                    *discriminator_block(256, 512),
-                    nn.Conv3d(512, 1, kernel_size=3, padding=1)
+#                     *discriminator_block(128, 256),
+                    nn.Conv3d(128, 1, kernel_size=3, padding=1)
                 ),
             )
         in_channels = 2
-        self.downsample = nn.AvgPool3d(in_channels, stride=2, padding=[1, 1], count_include_pad=False)
+        self.downsample = nn.AvgPool3d(in_channels, stride=2, padding=1, count_include_pad=False)
 
     def compute_loss(self, x, gt):
         """Computes the MSE between model output and scalar gt"""
         # print("Input shape: ", x.shape)
         outs = self.forward(x)
-        # for patch in outs:
+        for patch in outs:
         #     print("Patch Shape: ", patch.shape, patch[0][0][0])
-        loss = sum([torch.mean((out - gt) ** 2) for out in outs])
+            loss = sum([torch.mean((out - gt) ** 2) for out in outs])
         return loss
 
     def forward(self, x):
         outputs = []
         for m in self.models:
-            # print("Input shape fed to model: ", x.shape)
+#             print("Input shape fed to model: ", x.shape)
             outputs.append(m(x))
             x = self.downsample(x)
         return outputs
