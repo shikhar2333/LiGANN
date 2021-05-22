@@ -1,1 +1,5 @@
-./.vscode
+.vscode
+__pycache__
+.ipynb_checkpoints
+loss.csv
+tmp.dx
