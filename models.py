@@ -4,7 +4,42 @@ import torch.nn.functional as F
 import torch
 from torch.nn import init
 import numpy as np
-from torchvision.models import resnet18
+
+class CNN_Encoder(nn.Module ):
+    '''
+    CNN Network which encodes the voxelised ligands outputed from  
+    '''
+    def __init__(self, ligand_voxel_shape) -> None:
+        super().__init__()
+        channels, _, _, _ = ligand_voxel_shape
+        layers = []
+        # Define the VGG-16 network
+
+        # 2 conv layers followed by max poolingg
+        layers += [nn.Conv3d(channels, 32, padding=1, kernel_size=3,stride=1)]
+        layers += [nn.Conv3d(32, 32, padding=1,  kernel_size=3, stride=1)]
+        layers += [nn.MaxPool3d(stride=2, kernel_size=2)]
+        layers += [nn.ReLU()]
+
+        layers += [nn.Conv3d(32, 64, padding=1, kernel_size=3, stride=1)]
+        layers += [nn.Conv3d(64, 64, padding=1, kernel_size=3, stride=1)]
+        layers += [nn.MaxPool3d(stride=2, kernel_size=2)]
+        layers += [nn.ReLU()]
+
+        layers += [nn.Conv3d(64, 64, padding=1, kernel_size=3, stride=1)]
+        layers += [nn.Conv3d(64, 64, padding=1, kernel_size=3, stride=1)]
+        layers += [nn.Conv3d(64, 64, padding=1, kernel_size=3, stride=1)]
+        layers += [nn.MaxPool3d(stride=2, kernel_size=2)]
+        layers += [nn.ReLU()]
+
+        self.features = nn.Sequential(*layers)
+        self.fc = nn.Linear(6*6*6*64, 128)
+
+    def forward(self, x):
+        x = self.features(x)
+        x = torch.flatten(x, 1)
+        x = self.fc(x)
+        return x
 
 # define weight initialization
 def weights_init(m):
