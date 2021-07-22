@@ -3,11 +3,93 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 from torch.nn import init
-import numpy as np
+from torch.nn.modules.conv import Conv2d, Conv3d
 
-class CNN_Encoder(nn.Module ):
+def Conv_Block_3D(input_channels, output_channels, normalize=True):
+    layers = []
+    layers += [nn.Conv3d(input_channels, output_channels, kernel_size=4,
+            stride=2, padding=1)]
+    if normalize:
+        layers += [nn.BatchNorm3d(output_channels)]
+    layers += [nn.ReLU(inplace=True)]
+    return nn.Sequential(*layers)
+
+def Conv_Block_3D_Transposed(input_channels, output_channels, normalize=True):
+    layers = []
+    layers += [nn.ConvTranspose3d(input_channels, output_channels, kernel_size=4,
+            stride=2, padding=1)]
+    if normalize:
+        layers += [nn.BatchNorm3d(output_channels)]
+    layers += [nn.ReLU(inplace=True)]
+    return nn.Sequential(*layers)
+class Shape_VAE(nn.Module):
+    """
+    Returns autoencoded shape representation of the ligand
+    """
+    def __init__(self, ligand_voxel_shape) -> None:
+        super().__init__()
+        channels, _, _, _ = ligand_voxel_shape
+        # Encoder Model
+        self.sequence1 = Conv_Block_3D(channels, 32)
+        self.sequence2 = Conv_Block_3D(32, 64)
+        self.sequence3 = Conv_Block_3D(64, 64)
+
+        # return mu, log(sigma)
+        self.fc1 = nn.Linear(64*6*6*6, 128)
+        self.fc2 = nn.Linear(64*6*6*6, 128)
+
+        # Decoder Model
+        self.fc3 = nn.Linear(128, 64*6*6*6)
+
+        self.sequence4 = Conv_Block_3D_Transposed(64, 64)
+        self.sequence5 = Conv_Block_3D_Transposed(64, 32)
+        self.sequence6 = Conv_Block_3D_Transposed(32, channels)
+
+        # output 
+        self.output = Conv3d(channels, channels, 3, 2, 1)
+        self.sigmoid = nn.Sigmoid()
+
+    def encode(self, x):
+        x = self.sequence1(x)
+        print(x.shape)
+        x = self.sequence2(x)
+        print(x.shape)
+        x = self.sequence3(x)
+        print(x.shape)
+        x = x.view(x.size(0), -1)
+        print(x.shape)
+        # Returns mu and log(sigma)
+        return self.fc1(x), self.fc2(x)
+
+    def reparameterize(self, mu, logvar):
+        std = logvar.mul(0.5).exp_()
+        esp = torch.randn(*mu.size())
+        z = mu + std * esp
+        return z
+
+    def decode(self, z):
+        z = z.view(z.size(0), 64, 6, 6, 6)
+        print("Latent size: ", z.shape)
+        z = self.sequence4(z)
+        print("latent size: ", z.shape)
+        z = self.sequence5(z)
+        print(z.shape)
+        z = self.sequence6(z)
+        return z
+
+    def forward(self, x):
+        mu, sigma = self.encode(x)
+        print(mu.shape, sigma.shape)
+        z = self.reparameterize(mu, sigma)
+        print(z.shape)
+        z = self.fc3(z)
+        print(z.shape)
+        output = self.output(self.decode(z))
+        return self.sigmoid(output)
+
+class CNN_Encoder(nn.Module):
     '''
-    CNN Network which encodes the voxelised ligands outputed from  
+    CNN Network which encodes the voxelised ligands into a vectorised form 
     '''
     def __init__(self, ligand_voxel_shape) -> None:
         super().__init__()
@@ -35,8 +117,9 @@ class CNN_Encoder(nn.Module ):
         self.features = nn.Sequential(*layers)
         self.fc = nn.Linear(6*6*6*64, 128)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.features(x)
+#        print(x.shape)
         x = torch.flatten(x, 1)
         x = self.fc(x)
         return x
@@ -81,10 +164,10 @@ class UNetUp(nn.Module):
         x = torch.cat((x, skip_input), 1)
         return x
 
-'''
-    Generator Model for BicycleGAN( based on U-net )
-'''
 class Generator(nn.Module):
+    '''
+        Generator Model for BicycleGAN( based on U-net )
+    '''
     def __init__(self, latent_dim, voxel_array_shape):
         super(Generator, self).__init__()
         voxel_channels, self.h, self.w, self.d = voxel_array_shape
@@ -260,3 +343,8 @@ class MultiDiscriminator(nn.Module):
             outputs.append(m(x))
             x = self.downsample(x)
         return outputs
+
+encoder_model = Shape_VAE( (14, 48, 48, 48) )
+rand_tensor = torch.randn(1, 14, 48, 48, 48)
+rand_tensor = encoder_model.forward(rand_tensor)
+print(rand_tensor.shape)
