@@ -2,6 +2,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
+from torch.autograd import Variable
 from torch.nn import init
 from torch.nn.modules.conv import Conv2d, Conv3d
 
@@ -46,46 +47,44 @@ class Shape_VAE(nn.Module):
         self.sequence6 = Conv_Block_3D_Transposed(32, channels)
 
         # output 
-        self.output = Conv3d(channels, channels, 3, 2, 1)
+        self.output = Conv3d(channels, channels, 3, 1, 1)
         self.sigmoid = nn.Sigmoid()
 
     def encode(self, x):
         x = self.sequence1(x)
-        print(x.shape)
         x = self.sequence2(x)
-        print(x.shape)
         x = self.sequence3(x)
-        print(x.shape)
         x = x.view(x.size(0), -1)
-        print(x.shape)
         # Returns mu and log(sigma)
         return self.fc1(x), self.fc2(x)
 
     def reparameterize(self, mu, logvar):
         std = logvar.mul(0.5).exp_()
-        esp = torch.randn(*mu.size())
-        z = mu + std * esp
-        return z
+        eps = torch.cuda.FloatTensor(std.size()).normal_()
+        eps = Variable(eps)
+        return eps.mul(std).add_(mu)
+#         std = logvar.mul(0.5).exp_()
+#         esp = torch.randn(*mu.size())
+#         z = mu + std * esp
+#         return z
 
     def decode(self, z):
         z = z.view(z.size(0), 64, 6, 6, 6)
-        print("Latent size: ", z.shape)
         z = self.sequence4(z)
-        print("latent size: ", z.shape)
         z = self.sequence5(z)
-        print(z.shape)
         z = self.sequence6(z)
         return z
 
     def forward(self, x):
         mu, sigma = self.encode(x)
-        print(mu.shape, sigma.shape)
         z = self.reparameterize(mu, sigma)
-        print(z.shape)
         z = self.fc3(z)
-        print(z.shape)
         output = self.output(self.decode(z))
-        return self.sigmoid(output)
+        return self.sigmoid(output), mu, sigma
+    def loss(self, reconstructed_x, x, mu, logvar):
+        BCE_loss = F.binary_cross_entropy(reconstructed_x, x, reduction='mean')
+        KLD = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
+        return BCE_loss + KLD, BCE_loss, KLD
 
 class CNN_Encoder(nn.Module):
     '''
@@ -346,5 +345,5 @@ class MultiDiscriminator(nn.Module):
 
 encoder_model = Shape_VAE( (14, 48, 48, 48) )
 rand_tensor = torch.randn(1, 14, 48, 48, 48)
-rand_tensor = encoder_model.forward(rand_tensor)
-print(rand_tensor.shape)
+# rand_tensor = encoder_model.forward(rand_tensor)
+# print(rand_tensor.shape)
