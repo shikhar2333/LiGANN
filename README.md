@@ -6,6 +6,15 @@ module load cuda/10.0
 sinteractive -c 20 -g 2 -w gnodeXX
 ```
 ```
+rsync -aP  ada:/share2/shubham.s/shubham /scratch
+```
+```
+cd /scratch/shubham/crossdock_data
+```
+```
+tar -xvf CrossDocked2020.tgz -C structs
+```
+```
 jupyter-notebook --no-browser &
 ```
 ```
