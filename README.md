@@ -21,7 +21,7 @@ jupyter-notebook --no-browser &
 conda activate libmolgrid
 ```
 ```
-bash jp.sh <port on server> <port n local> <local ip> <user_name>
+bash ~/jp.sh <port on server> <port n local> <local ip> <user_name>
 ```
 
 ## Dependencies install:
