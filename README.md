@@ -28,3 +28,7 @@ bash ~/jp.sh <port on server> <port n local> <local ip> <user_name>
 ```
 conda env create -f environment.yml
 ```
+
+## TO DO:
+- script to get the number of .gninatypes files for each of the docked structures.
+- get the sdf file for each of the docked protein structure.
