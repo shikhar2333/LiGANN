@@ -32,4 +32,5 @@ conda env create -f environment.yml
 ## TO DO:
 - [x] script to get the number of .gninatypes files for each of the docked structures.
 - [x] get the sdf file for each of the docked protein structure.
-- Script to generate the types file containing examples(.gninatypes files) used for training.
+- [x] Script to generate the types file containing examples(.gninatypes files) used for training.
+
