@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch
 from torch.autograd import Variable
 from torch.nn import init
-from torch.nn.modules.conv import Conv2d, Conv3d
+from torch.nn.modules.conv import Conv3d
 
 def Conv_Block_3D(input_channels, output_channels, normalize=True):
     layers = []

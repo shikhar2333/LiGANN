@@ -1,22 +1,11 @@
 #!/usr/bin/env python
-# coding: utf-8
-
-# In[1]:
-
 
 import molgrid
-import os
 import matplotlib.pyplot as plt
 import argparse
 from models import *
 import torch.optim as optim
 import sys
-import datetime
-import time
-
-
-# In[2]:
-
 
 # set some constants
 batch_size = 5
@@ -26,41 +15,36 @@ cuda = True
 
 molgrid.set_random_seed(0)
 torch.manual_seed(0)
-np.random.seed(0)
 
+def extract_sdf_file(gninatypes_file):
+    path = gninatypes_file.split("/")
+    base_name = path[1].split(".")[0]
+    base_name = base_name.rsplit("_", 1)[0]
+    base_name += ".sdf"
+    return datadir + "/structs/" + path[0] + "/" + base_name
 
-# In[3]:
-
-
-'''
-    Arguement Parsing
-'''
-# parser = argparse.ArgumentParser()
-# parser.add_argument("--epoch", type=int, default=0, help="epoch to start training from")
-# parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
-# parser.add_argument("--batch_size", type=int, default=8, help="size of the batches")
-# parser.add_argument("--lr", type=float, default=0.0002, help="adam: learning rate")
-# parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first order momentum of gradient")
-# parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of first order momentum of gradient")
-# parser.add_argument("--n_cpu", type=int, default=8, help="number of cpu threads to use during batch generation")
-# parser.add_argument("--img_height", type=int, default=128, help="size of image height")
-# parser.add_argument("--img_width", type=int, default=128, help="size of image width")
-# parser.add_argument("--channels", type=int, default=3, help="number of image channels")
-# parser.add_argument("--latent_dim", type=int, default=8, help="number of latent codes")
-# parser.add_argument("--sample_interval", type=int, default=400, help="interval between saving generator samples")
-# parser.add_argument("--checkpoint_interval", type=int, default=-1, help="interval between model checkpoints")
-# parser.add_argument("--lambda_pixel", type=float, default=10, help="pixelwise loss weight")
-# parser.add_argument("--lambda_latent", type=float, default=0.5, help="latent loss weight")
-# parser.add_argument("--lambda_kl", type=float, default=0.01, help="kullback-leibler loss weight")
-# opt = parser.parse_args()
-
-
-# In[4]:
+parser = argparse.ArgumentParser()
+parser.add_argument("--epoch", type=int, default=0, help="epoch to start training from")
+parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
+parser.add_argument("--batch_size", type=int, default=8, help="size of the batches")
+parser.add_argument("--lr", type=float, default=0.0002, help="adam: learning rate")
+parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first order momentum of gradient")
+parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of first order momentum of gradient")
+parser.add_argument("--n_cpu", type=int, default=8, help="number of cpu threads to use during batch generation")
+parser.add_argument("--img_height", type=int, default=128, help="size of image height")
+parser.add_argument("--img_width", type=int, default=128, help="size of image width")
+parser.add_argument("--channels", type=int, default=3, help="number of image channels")
+parser.add_argument("--latent_dim", type=int, default=8, help="number of latent codes")
+parser.add_argument("--sample_interval", type=int, default=400, help="interval between saving generator samples")
+parser.add_argument("--checkpoint_interval", type=int, default=-1, help="interval between model checkpoints")
+parser.add_argument("--lambda_pixel", type=float, default=10, help="pixelwise loss weight")
+parser.add_argument("--lambda_latent", type=float, default=0.5, help="latent loss weight")
+parser.add_argument("--lambda_kl", type=float, default=0.01, help="kullback-leibler loss weight")
+opt = parser.parse_args()
 
 
 # use the libmolgrid ExampleProvider to obtain shuffled, balanced, and stratified batches from a file
 e = molgrid.ExampleProvider(data_root=datadir+"/structs",cache_structs=False, balanced=True,shuffle=True)
-# e.cache_structs=False
 e.populate(fname)
 
 ex = e.next()
@@ -84,19 +68,11 @@ print(tensor_shape)
 # molgrid.write_dx("temp",gmaker,center,1)
 
 
-# In[5]:
-
-
 # Initialize Generator, Enocoder, VAE and LR Discriminator on GPU
 generator = Generator(8, dims).to('cuda')
 encoder = Encoder(vaeLike=True).to('cuda')
 D_VAE = MultiDiscriminator(dims).to('cuda')
 D_LR = MultiDiscriminator(dims).to('cuda')
-
-# generator = Generator(8, dims)
-# encoder = Encoder(vaeLike=True)
-# D_VAE = MultiDiscriminator(dims)
-# D_LR = MultiDiscriminator(dims)
 
 # Initialise weights
 generator.apply(weights_init)
@@ -112,8 +88,6 @@ optimizer_D_LR = optim.Adam(D_LR.parameters(), lr=0.0002, betas=[0.5, 0.999])
 # construct input tensors
 input_tensor1 = torch.zeros(tensor_shape, dtype=torch.float32, device='cuda')
 input_tensor2 = torch.zeros(tensor_shape, dtype=torch.float32, device='cuda')
-# p3d = (40,40,40,40,40,40)
-# print(input_tensor.shape)
 float_labels = torch.zeros(batch_size, dtype=torch.float32)
 
 
@@ -121,7 +95,6 @@ float_labels = torch.zeros(batch_size, dtype=torch.float32)
 
 
 from torch.autograd import Variable
-# Tensor = torch.Tensor
 Tensor = torch.cuda.FloatTensor if cuda else torch.Tensor
 def reparameterization(mu, logvar):
     std = torch.exp(logvar / 2)
@@ -165,7 +138,7 @@ print(opt)
 
 
 # train for 500 iterations
-G_loss, Pixel_loss, KL_Loss, Latent_loss, DVAE_loss, DLR_loss = [],[],[],[],[],[]
+#G_loss, Pixel_loss, KL_Loss, Latent_loss, DVAE_loss, DLR_loss = [],[],[],[],[],[]
 for iteration in range(500):
     # load data
     batch1 = e.next_batch(batch_size)
@@ -187,11 +160,9 @@ for iteration in range(500):
     
     # L1 loss for measuring degree of diff between generated outputs and the actual input
     loss_pixel = mae_loss(fake_ligands, input_tensor2)
-#     Pixel_loss.append(loss_pixel)
     
     # KL divergence between the distribution learned by the encoder and a random Gaussian
     loss_kl = 0.5 * torch.sum(torch.exp(logvar) + mu ** 2 - logvar - 1)
-#     KL_Loss.append(loss_kl)
     
     # discrimantor distinguishing b/w fake and real for cVAE GAN
     loss_VAE_GAN = D_VAE.compute_loss(fake_ligands, 1)
@@ -205,7 +176,6 @@ for iteration in range(500):
     
     # Total Loss: Generator + Encoder
     loss_GE = loss_VAE_GAN + loss_LR_GAN + opt['lambda_pixel'] * loss_pixel + opt['lambda_kl'] * loss_kl
-#     G_loss.append(loss_GE)
     
     loss_GE.backward(retain_graph=True)
     optimizer_E.step()
@@ -213,7 +183,6 @@ for iteration in range(500):
     # Generator only loss
     _mu, _ = encoder(fake_ligands1)
     loss_latent = opt['lambda_latent'] * mae_loss(_mu, sampled_z)
-#     Latent_loss.append(loss_latent)
     
     loss_latent.backward()
     optimizer_G.step()
@@ -221,7 +190,6 @@ for iteration in range(500):
     # Train the discriminator for the cVAE GAN.
     optimizer_D_VAE.zero_grad()
     loss_D_VAE = D_VAE.compute_loss(fake_ligands.detach(), 0) + D_VAE.compute_loss(input_tensor2, 1)
-#     DVAE_loss.append(loss_D_VAE)
     
     loss_D_VAE.backward()
     optimizer_D_VAE.step()
@@ -229,7 +197,6 @@ for iteration in range(500):
     # Train the discriminator for the cLR GAN.
     optimizer_D_LR.zero_grad()
     loss_D_LR = D_LR.compute_loss(fake_ligands1.detach(), 0) + D_LR.compute_loss(input_tensor2, 1)
-#     DLR_loss.append(loss_D_LR)
     
     loss_D_LR.backward()
     optimizer_D_LR.step()
@@ -248,16 +215,10 @@ for iteration in range(500):
             )
     )
 
-
-# In[ ]:
-
-
 def plot(loss):
     plt.plot(loss)
 
 
-# In[ ]:
 
 
-# plot(G_lo)
 
