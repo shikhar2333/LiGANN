@@ -34,3 +34,15 @@ conda env create -f environment.yml
 - [x] get the sdf file for each of the docked protein structure.
 - [x] Script to generate the types file containing examples(.gninatypes files) used for training.
 
+## Note:
+```
+batch = e.next_batch(batch_size)
+```
+```
+batch[0].coord_sets[0].src
+```
+gives the source protein file for the first example of the batch.
+```
+batch[0].coord_sets[1].src
+```
+gives the source ligand file for the first example of the batch.
