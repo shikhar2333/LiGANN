@@ -63,10 +63,6 @@ class Shape_VAE(nn.Module):
         eps = torch.cuda.FloatTensor(std.size()).normal_()
         eps = Variable(eps)
         return eps.mul(std).add_(mu)
-#         std = logvar.mul(0.5).exp_()
-#         esp = torch.randn(*mu.size())
-#         z = mu + std * esp
-#         return z
 
     def decode(self, z):
         z = z.view(z.size(0), 64, 6, 6, 6)
@@ -81,6 +77,7 @@ class Shape_VAE(nn.Module):
         z = self.fc3(z)
         output = self.output(self.decode(z))
         return self.sigmoid(output), mu, sigma
+
     def loss(self, reconstructed_x, x, mu, logvar):
         BCE_loss = F.binary_cross_entropy(reconstructed_x, x, reduction='mean')
         KLD = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
@@ -343,7 +340,7 @@ class MultiDiscriminator(nn.Module):
             x = self.downsample(x)
         return outputs
 
-encoder_model = Shape_VAE( (14, 48, 48, 48) )
-rand_tensor = torch.randn(1, 14, 48, 48, 48)
-# rand_tensor = encoder_model.forward(rand_tensor)
-# print(rand_tensor.shape)
+if __name__ == "__main__":
+    encoder_model = Shape_VAE( (14, 48, 48, 48) )
+    rand_tensor = torch.randn(1, 14, 48, 48, 48)
+

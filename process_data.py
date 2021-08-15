@@ -1,20 +1,20 @@
 #!/usr/bin/env python
-# coding: utf-8
 import torch
 import molgrid
 import os
 import shutil
 
 batch_size = 5
-datadir = '/scratch/shubham/crossdock_data'
-fname = datadir+"/custom_cd.types" 
+#datadir = '/scratch/shubham/crossdock_data'
+datadir = "/crossdock_train_data/crossdock_data"
+fname = datadir+"/training_example.types" 
 
 molgrid.set_random_seed(0)
 torch.manual_seed(0)
 # np.random.seed(0)
 
 # use the libmolgrid ExampleProvider to obtain shuffled, balanced, and stratified batches from a file
-e = molgrid.ExampleProvider(data_root=datadir+"/structs", cache_structs=False, balanced=True,shuffle=True)
+e = molgrid.ExampleProvider(data_root=datadir+"/structs", cache_structs=False,shuffle=True)
 e.populate(fname)
 
 # initialize libmolgrid GridMaker
@@ -51,8 +51,24 @@ input_tensor2 = torch.zeros(tensor_shape, dtype=torch.float32)
 #     shutil.move(filename, "/scratch/shubham/voxel_data/" + filename)
 
 # test loading the data
-filename = "/scratch/shubham/voxel_data/" + "voxel_tensor" + "_" + "1" + ".pt"
-loaded = torch.load(filename)
-print(loaded['A'].shape, loaded['B'].shape)
 
+#filename = "/scratch/shubham/voxel_data/" + "voxel_tensor" + "_" + "1" + ".pt"
+#loaded = torch.load(filename)
+#print(loaded['A'].shape, loaded['B'].shape)
 
+def extract_sdf_file(gninatypes_file):
+    path = gninatypes_file.split("/")
+    base_name = path[1].split(".")[0]
+    base_name = base_name.rsplit("_", 1)[0]
+    base_name += ".sdf"
+    return datadir + "/structs/" + path[0] + "/" + base_name
+
+for i in range(10):
+    batch1 = e.next_batch(batch_size)
+    batch2 = e.next_batch(batch_size)
+    gmaker.forward(batch1, input_tensor1, 0, random_rotation=False)
+    gmaker.forward(batch2, input_tensor2, 0, random_rotation=False)
+    print(batch2[0].coord_sets[0].src)
+    print(batch1[0].coord_sets[0].src)
+    print()
+    

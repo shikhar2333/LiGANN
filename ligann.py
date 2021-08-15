@@ -6,12 +6,15 @@ import argparse
 from models import *
 import torch.optim as optim
 import sys
+import numpy as np
+from rdkit import Chem
 
 # set some constants
 batch_size = 5
-datadir = '/scratch/shubham/crossdock_data'
-fname = datadir+"/custom_cd.types" 
-cuda = True
+#datadir = '/scratch/shubham/crossdock_data'
+datadir = "/crossdock_train_data/crossdock_data"
+fname = datadir+"/training_example.types" 
+cuda = True if torch.cuda.is_available() else False
 
 molgrid.set_random_seed(0)
 torch.manual_seed(0)
@@ -25,7 +28,7 @@ def extract_sdf_file(gninatypes_file):
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--epoch", type=int, default=0, help="epoch to start training from")
-parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
+parser.add_argument("--n_epochs", type=int, default=50, help="number of epochs of training")
 parser.add_argument("--batch_size", type=int, default=8, help="size of the batches")
 parser.add_argument("--lr", type=float, default=0.0002, help="adam: learning rate")
 parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first order momentum of gradient")
@@ -38,13 +41,13 @@ parser.add_argument("--latent_dim", type=int, default=8, help="number of latent 
 parser.add_argument("--sample_interval", type=int, default=400, help="interval between saving generator samples")
 parser.add_argument("--checkpoint_interval", type=int, default=-1, help="interval between model checkpoints")
 parser.add_argument("--lambda_pixel", type=float, default=10, help="pixelwise loss weight")
-parser.add_argument("--lambda_latent", type=float, default=0.5, help="latent loss weight")
+parser.add_argument("--lambda_latent", type=float, default=0.1, help="latent loss weight")
 parser.add_argument("--lambda_kl", type=float, default=0.01, help="kullback-leibler loss weight")
-opt = parser.parse_args()
+opt = vars(parser.parse_args())
 
 
 # use the libmolgrid ExampleProvider to obtain shuffled, balanced, and stratified batches from a file
-e = molgrid.ExampleProvider(data_root=datadir+"/structs",cache_structs=False, balanced=True,shuffle=True)
+e = molgrid.ExampleProvider(data_root=datadir+"/structs", cache_structs=False, shuffle=True)
 e.populate(fname)
 
 ex = e.next()
@@ -60,7 +63,7 @@ dims = gmaker.grid_dimensions(e.num_types()//2)
 
 mgridout = molgrid.MGrid4f(*dims)
 gmaker.forward(center, c, mgridout.cpu())
-molgrid.write_dx("tmp.dx", mgridout[0].cpu(), center, 0.5)
+#molgrid.write_dx("tmp.dx", mgridout[0].cpu(), center, 0.5)
 
 print("4D Tensor Shape: ", dims)
 tensor_shape = (batch_size,)+dims
@@ -73,26 +76,26 @@ generator = Generator(8, dims).to('cuda')
 encoder = Encoder(vaeLike=True).to('cuda')
 D_VAE = MultiDiscriminator(dims).to('cuda')
 D_LR = MultiDiscriminator(dims).to('cuda')
+VAE = Shape_VAE(dims).to('cuda')
 
 # Initialise weights
 generator.apply(weights_init)
 D_VAE.apply(weights_init)
 D_LR.apply(weights_init)
+VAE.apply(weights_init)
 
 # construct optimizers for the 4 networks
 optimizer_G = optim.Adam(generator.parameters(), lr=0.0002, betas=[0.5, 0.999])
 optimizer_E = optim.Adam(encoder.parameters(), lr=0.0002, betas=[0.5, 0.999])
 optimizer_D_VAE = optim.Adam(D_VAE.parameters(), lr=0.0002, betas=[0.5, 0.999])
 optimizer_D_LR = optim.Adam(D_LR.parameters(), lr=0.0002, betas=[0.5, 0.999])
+optimizer_VAE = optim.Adam(VAE.parameters(), lr=opt["lr"], betas=[opt["b1"],
+    opt["b2"]])
 
 # construct input tensors
 input_tensor1 = torch.zeros(tensor_shape, dtype=torch.float32, device='cuda')
 input_tensor2 = torch.zeros(tensor_shape, dtype=torch.float32, device='cuda')
 float_labels = torch.zeros(batch_size, dtype=torch.float32)
-
-
-# In[6]:
-
 
 from torch.autograd import Variable
 Tensor = torch.cuda.FloatTensor if cuda else torch.Tensor
@@ -103,49 +106,28 @@ def reparameterization(mu, logvar):
     return z
 
 
-# In[7]:
-
-
 total_params = sum(p.numel() for p in generator.parameters())
 train_params = sum(p.numel() for p in generator.parameters() if p.requires_grad)
 print("Total Parameters: ", total_params)
 print("Trainable Parameters: ", train_params)
-
-
-# In[8]:
-
 
 total_params = sum(p.numel() for p in D_VAE.parameters())
 train_params = sum(p.numel() for p in D_VAE.parameters() if p.requires_grad)
 print("Total Parameters: ", total_params)
 print("Trainable Parameters: ", train_params)
 
-
-# In[9]:
-
-
 # Loss functions
 mae_loss = torch.nn.L1Loss()
-opt = {
-  'lambda_pixel': 10,
-   'lambda_kl': 0.01,
-    'lambda_latent': 0.1
-}
-print(opt)
-
-
-# In[ ]:
-
+#torch.autograd.set_detect_anomaly(True)
+import os
 
 # train for 500 iterations
-#G_loss, Pixel_loss, KL_Loss, Latent_loss, DVAE_loss, DLR_loss = [],[],[],[],[],[]
-for iteration in range(500):
+for iteration in range(opt["n_epochs"]):
     # load data
     batch1 = e.next_batch(batch_size)
     batch2 = e.next_batch(batch_size)
     # libmolgrid can interoperate directly with Torch tensors, using views over the same memory.
     # internally, the libmolgrid GridMaker can use libmolgrid Transforms to apply random rotations and translations for data augmentation
-    # the user may also use libmolgrid Transforms directly in python
     gmaker.forward(batch1, input_tensor1, 0, random_rotation=False)
     gmaker.forward(batch2, input_tensor2, 0, random_rotation=False)
     
@@ -186,6 +168,23 @@ for iteration in range(500):
     
     loss_latent.backward()
     optimizer_G.step()
+
+    # Feed the generator output to the Shape_VAE network
+    optimizer_VAE.zero_grad()
+    recon_x, mu, logvar = VAE(fake_ligands.detach())
+    total_loss, BCE_loss, KLD = VAE.loss(recon_x,
+            fake_ligands.detach(), mu, logvar)
+    total_loss.backward()
+    optimizer_VAE.step()
+
+    # get the smile strings
+    sdf_files = [extract_sdf_file(batch2[i].coord_sets[0].src) for i in
+            range(batch_size)]
+    suppl =  [Chem.MolFromMolFile(sdf_files[i]) for i in range(batch_size)]
+    for i in range(batch_size):
+        if suppl[i]:
+            print(Chem.MolToSmiles(suppl[i]))
+    print()
     
     # Train the discriminator for the cVAE GAN.
     optimizer_D_VAE.zero_grad()
@@ -201,19 +200,22 @@ for iteration in range(500):
     loss_D_LR.backward()
     optimizer_D_LR.step()
     
-    sys.stdout.write(
-            "\r[Epoch %d/%d] [G loss: %.3f, pixel loss: %.3f, kl loss: %.3f, latent loss: %.3f D_VAE loss: %.3f, D_LR loss: %.3f]"
-            % (
-                iteration,
-                500,
-                loss_GE.item(),
-                loss_pixel.item(),
-                loss_kl.item(),
-                loss_latent.item(),
-                loss_D_VAE.item(),
-                loss_D_LR.item()
-            )
-    )
+#    sys.stdout.write(
+#            """\r[Epoch %d/%d] [G loss: %.3f, pixel loss: %.3f, kl loss: %.3f,
+#            latent loss: %.3f, D_VAE loss: %.3f, D_LR loss: %.3f, Shape_VAE loss:
+#            %.3f]"""
+#            % (
+#                iteration,
+#                opt["n_epochs"],
+#                loss_GE.item(),
+#                loss_pixel.item(),
+#                loss_kl.item(),
+#                loss_latent.item(),
+#                loss_D_VAE.item(),
+#                loss_D_LR.item(),
+#                total_loss.item()
+#            )
+#    )
 
 def plot(loss):
     plt.plot(loss)
