@@ -1,60 +1,37 @@
 #!/usr/bin/env python
 import torch
+from torch.utils.data import Dataset
 import molgrid
-import os
+#import os
 import shutil
+import argparse
+from rdkit import Chem, RDLogger
+from rdkit.Chem.rdmolops import SanitizeMol
 
 batch_size = 5
 #datadir = '/scratch/shubham/crossdock_data'
 datadir = "/crossdock_train_data/crossdock_data"
 fname = datadir+"/training_example.types" 
 
-molgrid.set_random_seed(0)
-torch.manual_seed(0)
-# np.random.seed(0)
+voxel_dir = "/crossdock_train_data/voxel_data"
+smiles_dir = "/crossdock_train_data/smiles_data"
 
-# use the libmolgrid ExampleProvider to obtain shuffled, balanced, and stratified batches from a file
-e = molgrid.ExampleProvider(data_root=datadir+"/structs", cache_structs=False,shuffle=True)
-e.populate(fname)
+parser = argparse.ArgumentParser()
+parser.add_argument("--i", type=int, default=0, help="number of iterations")
+parser.add_argument("--voxel_dir", type=str, default=voxel_dir, help="""path for
+storing voxel tensors""")
+parser.add_argument("--smile_dir", type=str, default=smiles_dir, help="""path
+        for storing smiles""")
 
-# initialize libmolgrid GridMaker
-gmaker = molgrid.GridMaker()
-
-# e.num_types()//2 is the number of channels used for voxel representation of docked ligand
-print("Number of channels: ", e.num_types()//2)
-dims = gmaker.grid_dimensions(e.num_types()//2)
-
-print("4D Tensor Shape: ", dims)
-tensor_shape = (batch_size,)+dims
-print(tensor_shape)
-
-# construct input tensors
-input_tensor1 = torch.zeros(tensor_shape, dtype=torch.float32)
-input_tensor2 = torch.zeros(tensor_shape, dtype=torch.float32)
-
-'''
-    Generate voxel data batchwise( 5 batches default ) for 500 epochs
-'''
-
-# for iteration in range(500):
-#     # load data
-#     batch1 = e.next_batch(batch_size)
-#     batch2 = e.next_batch(batch_size)
-#     # libmolgrid can interoperate directly with Torch tensors, using views over the same memory.
-#     # internally, the libmolgrid GridMaker can use libmolgrid Transforms to apply random rotations and translations for data augmentation
-#     # the user may also use libmolgrid Transforms directly in python
-#     gmaker.forward(batch1, input_tensor1, 0, random_rotation=False)
-#     gmaker.forward(batch2, input_tensor2, 0, random_rotation=False)
-#     torch_dict = {'A': input_tensor1, 'B': input_tensor2}
-#     filename = "voxel_tensor" + "_" + str(iteration) + ".pt"
-#     torch.save(torch_dict, filename)
-#     shutil.move(filename, "/scratch/shubham/voxel_data/" + filename)
-
-# test loading the data
-
-#filename = "/scratch/shubham/voxel_data/" + "voxel_tensor" + "_" + "1" + ".pt"
-#loaded = torch.load(filename)
-#print(loaded['A'].shape, loaded['B'].shape)
+class CustomMolLoader(Dataset):
+    def __init__(self, data_dir, voxel_transform=None, smile_transform=None):
+        self.data_dir = data_dir
+        self.voxel_transform = voxel_transform
+        self.smile_transform = smile_transform
+    
+    def __len__(self) -> int:
+        return 1
+#        return len()
 
 def extract_sdf_file(gninatypes_file):
     path = gninatypes_file.split("/")
@@ -63,12 +40,66 @@ def extract_sdf_file(gninatypes_file):
     base_name += ".sdf"
     return datadir + "/structs/" + path[0] + "/" + base_name
 
-for i in range(10):
-    batch1 = e.next_batch(batch_size)
-    batch2 = e.next_batch(batch_size)
-    gmaker.forward(batch1, input_tensor1, 0, random_rotation=False)
-    gmaker.forward(batch2, input_tensor2, 0, random_rotation=False)
-    print(batch2[0].coord_sets[0].src)
-    print(batch1[0].coord_sets[0].src)
-    print()
+if __name__ == "__main__":
+    molgrid.set_random_seed(0)
+    torch.manual_seed(0)
+
+    lg = RDLogger.logger()
+    lg.setLevel(RDLogger.CRITICAL)
+    
+    # use the libmolgrid ExampleProvider to obtain shuffled, balanced, and stratified batches from a file
+    e = molgrid.ExampleProvider(data_root=datadir+"/structs", cache_structs=False,shuffle=True)
+    e.populate(fname)
+    
+    # initialize libmolgrid GridMaker
+    gmaker = molgrid.GridMaker()
+    
+    # e.num_types()//2 is the number of channels used for voxel representation of docked ligand
+    print("Number of channels: ", e.num_types()//2)
+    dims = gmaker.grid_dimensions(e.num_types()//2)
+    
+    print("4D Tensor Shape: ", dims)
+    tensor_shape = dims
+    print(tensor_shape)
+    
+    # construct input tensors
+    input_tensor = torch.zeros(tensor_shape, dtype=torch.float32)
+    
+    
+    cnt = 0
+    smile_filename = "crossdock_smiles.smi"
+    fp = open(smile_filename, "w")
+    maxi = float('-inf')
+
+    for iteration in range(10000):
+         # load data
+         batch = e.next()
+         gmaker.forward(batch, input_tensor, 0, random_rotation=False)
+         sdf_files = extract_sdf_file(batch.coord_sets[0].src)
+         suppl = Chem.MolFromMolFile(sdf_files)                       
+         if suppl:
+             tensor_filename = "voxel_tensor" + "_" + str(cnt) + ".pt"
+             smile_string = Chem.MolToSmiles(suppl)
+             torch.save(input_tensor, tensor_filename)
+             shutil.move(tensor_filename, voxel_dir + "/" + tensor_filename)
+             maxi = max(maxi, len(smile_string))
+             fp.write(smile_string + "\n")
+             cnt += 1
+    print(maxi)
+    fp.close()
+# test loading the data
+
+#filename = "/scratch/shubham/voxel_data/" + "voxel_tensor" + "_" + "1" + ".pt"
+#loaded = torch.load(filename)
+#print(loaded['A'].shape, loaded['B'].shape)
+
+
+#for i in range(10):
+#    batch1 = e.next_batch(batch_size)
+#    batch2 = e.next_batch(batch_size)
+#    gmaker.forward(batch1, input_tensor1, 0, random_rotation=False)
+#    gmaker.forward(batch2, input_tensor2, 0, random_rotation=False)
+#    print(batch2[0].coord_sets[0].src)
+#    print(batch1[0].coord_sets[0].src)
+#    print()
     
