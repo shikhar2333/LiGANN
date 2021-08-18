@@ -46,3 +46,9 @@ gives the source protein file for the first example of the batch.
 batch[0].coord_sets[1].src
 ```
 gives the source ligand file for the first example of the batch.
+
+## Training the models:
+```
+python ligann.py -i <input_smiles_file>  -v <voxel_tensors_dir> -s
+<saved_models_dir>
+```

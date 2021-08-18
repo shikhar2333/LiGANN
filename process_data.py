@@ -6,22 +6,6 @@ import molgrid
 import shutil
 import argparse
 from rdkit import Chem, RDLogger
-from rdkit.Chem.rdmolops import SanitizeMol
-
-batch_size = 5
-#datadir = '/scratch/shubham/crossdock_data'
-datadir = "/crossdock_train_data/crossdock_data"
-fname = datadir+"/training_example.types" 
-
-voxel_dir = "/crossdock_train_data/voxel_data"
-smiles_dir = "/crossdock_train_data/smiles_data"
-
-parser = argparse.ArgumentParser()
-parser.add_argument("--i", type=int, default=0, help="number of iterations")
-parser.add_argument("--voxel_dir", type=str, default=voxel_dir, help="""path for
-storing voxel tensors""")
-parser.add_argument("--smile_dir", type=str, default=smiles_dir, help="""path
-        for storing smiles""")
 
 class CustomMolLoader(Dataset):
     def __init__(self, data_dir, voxel_transform=None, smile_transform=None):
@@ -33,7 +17,7 @@ class CustomMolLoader(Dataset):
         return 1
 #        return len()
 
-def extract_sdf_file(gninatypes_file):
+def extract_sdf_file(gninatypes_file, datadir):
     path = gninatypes_file.split("/")
     base_name = path[1].split(".")[0]
     base_name = base_name.rsplit("_", 1)[0]
@@ -41,6 +25,22 @@ def extract_sdf_file(gninatypes_file):
     return datadir + "/structs/" + path[0] + "/" + base_name
 
 if __name__ == "__main__":
+    datadir = "/crossdock_train_data/crossdock_data"
+    fname = datadir+"/training_example.types" 
+    
+    voxel_dir = "/crossdock_train_data/voxel_data"
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--i", type=int, default=10000, help="number of iterations")
+    parser.add_argument("--voxel_dir", type=str, default=voxel_dir, help="""path for
+    storing voxel tensors""")
+    parser.add_argument("--data_dir", type=str, default=datadir, help="""path for
+    input data""")
+    parser.add_argument("--types_dir", type=str, default=fname, help="""path for
+    types file used for training""")
+    
+    opt = vars(parser.parse_args())
+
     molgrid.set_random_seed(0)
     torch.manual_seed(0)
 
@@ -48,8 +48,9 @@ if __name__ == "__main__":
     lg.setLevel(RDLogger.CRITICAL)
     
     # use the libmolgrid ExampleProvider to obtain shuffled, balanced, and stratified batches from a file
-    e = molgrid.ExampleProvider(data_root=datadir+"/structs", cache_structs=False,shuffle=True)
-    e.populate(fname)
+    print(opt["data_dir"])
+    e = molgrid.ExampleProvider(data_root=opt["data_dir"]+"/structs", cache_structs=False,shuffle=True)
+    e.populate(opt["types_dir"])
     
     # initialize libmolgrid GridMaker
     gmaker = molgrid.GridMaker()
@@ -62,29 +63,29 @@ if __name__ == "__main__":
     tensor_shape = dims
     print(tensor_shape)
     
-    # construct input tensors
-    input_tensor = torch.zeros(tensor_shape, dtype=torch.float32)
-    
+    # construct input tensor
+    input_tensor = torch.zeros(tensor_shape, dtype=torch.float32, device='cuda')
     
     cnt = 0
     smile_filename = "crossdock_smiles.smi"
     fp = open(smile_filename, "w")
     maxi = float('-inf')
 
-    for iteration in range(10000):
+    for iteration in range(opt["i"]):
          # load data
          batch = e.next()
          gmaker.forward(batch, input_tensor, 0, random_rotation=False)
-         sdf_files = extract_sdf_file(batch.coord_sets[0].src)
+         sdf_files = extract_sdf_file(batch.coord_sets[0].src, opt["data_dir"])
          suppl = Chem.MolFromMolFile(sdf_files)                       
          if suppl:
              tensor_filename = "voxel_tensor" + "_" + str(cnt) + ".pt"
              smile_string = Chem.MolToSmiles(suppl)
              torch.save(input_tensor, tensor_filename)
-             shutil.move(tensor_filename, voxel_dir + "/" + tensor_filename)
+             shutil.move(tensor_filename, opt["voxel_dir"] + "/" + tensor_filename)
              maxi = max(maxi, len(smile_string))
-             fp.write(smile_string + "\n")
-             cnt += 1
+             if smile_string != "[Y]":
+                 fp.write(smile_string + "\n")
+                 cnt += 1
     print(maxi)
     fp.close()
 # test loading the data

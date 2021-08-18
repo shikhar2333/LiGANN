@@ -7,3 +7,4 @@ tmp.dx
 utils.py 
 types
 test_scripts/out.txt
+test_scripts/prepare_training_structs.ipynb
