@@ -23,6 +23,7 @@ def Conv_Block_3D_Transposed(input_channels, output_channels, normalize=True):
         layers += [nn.BatchNorm3d(output_channels)]
     layers += [nn.ReLU(inplace=True)]
     return nn.Sequential(*layers)
+
 class Shape_VAE(nn.Module):
     """
     Returns autoencoded shape representation of the ligand
@@ -119,6 +120,15 @@ class CNN_Encoder(nn.Module):
         x = torch.flatten(x, 1)
         x = self.fc(x)
         return x
+
+class MolDecoder(nn.Module):
+    def __init__(self, embed_size, hidden_size, vocab_size=39, num_layers=1) -> None:
+        self.embed_layer = nn.Embedding(vocab_size, embed_size)
+        self.lstm_layer = nn.LSTM(embed_size, hidden_size, num_layers,
+                batch_first=True)
+        self.final_layer = nn.Linear(hidden_size, vocab_size)
+    def forward(self, cnn_features, captions, lengths):
+        pass
 
 # define weight initialization
 def weights_init(m):

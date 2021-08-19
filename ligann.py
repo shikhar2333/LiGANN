@@ -1,17 +1,15 @@
 #!/usr/bin/env python
-# Copyright (C) 2019 Computational Science Lab, UPF <http://www.compscience.org/>
-# Copying and distribution is allowed under AGPLv3 license
 import argparse
 from models import *
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.autograd import Variable
 import numpy as np
-from rdkit import Chem
 import sys
 import time
 import datetime
 from MolDataLoader import CustomMolLoader
+from utils.process_smiles import process_smiles
 
 Tensor = torch.cuda.FloatTensor
 def reparameterization(mu, logvar):
@@ -61,44 +59,14 @@ if __name__ == "__main__":
     opt = vars(parser.parse_args())
     
     smiles_path = opt["input"]
-    smiles = open(smiles_path, "r").read().strip().split()
-    print(len(smiles))
-    strings = np.zeros((len(smiles), 163), dtype='uint8')
-    lengths = np.array([len(smile) for smile in smiles])
-
-    vocab_list = ["pad", "start", "end",
-        "C", "c", "N", "n", "S", "s", "P", "O", "o",
-        "B", "F", "I","/", "\\",
-        "X", "Y", "Z","W", "H",
-        "1", "2", "3", "4", "5", "6", "7", "8",
-        "#", "=", "-", "+", "(", ")", "[", "]", "@"
-    ]
-    print(len(vocab_list))
-    vocab_i2c_v1 = {i: x for i, x in enumerate(vocab_list)}
-    vocab_c2i_v1 = {vocab_i2c_v1[i]: i for i in vocab_i2c_v1}
     dims = (14, 48, 48, 48)
-    
-    
-    for i, sstring in enumerate(smiles):
-        mol = Chem.MolFromSmiles(sstring)
-        if not mol:
-            raise ValueError("Failed to parse molecule '{}'".format(mol))
-    
-        sstring = Chem.MolToSmiles(mol)  # Make the SMILES canonical.
-        sstring = sstring.replace("Cl", "X").replace("[nH]", "Y").replace("Br",
-                "Z").replace("Ru", "W")
-        try:
-            vals = [1] + [vocab_c2i_v1[xchar] for xchar in sstring] + [2]
-        except KeyError:
-            raise ValueError(("Unkown SMILES tokens: {} in string '{}'."
-                              .format(", ".join([x for x in sstring if x not in vocab_c2i_v1]),
-                                                                          sstring)))
-        strings[i, :len(vals)] = vals
 
+    strings, lengths = process_smiles(smiles_path)
     molDatasetObject = CustomMolLoader(opt["voxels"], strings, lengths)
 
     # initialize CustomMolLoader
     dataloader = DataLoader(molDatasetObject, batch_size=opt["batch_size"], shuffle=True)
+    print(len(dataloader))
 
     # Initialize Generator, Enocoder, VAE and LR Discriminator on GPU
     generator = Generator(8, dims).to('cuda')
@@ -109,15 +77,15 @@ if __name__ == "__main__":
 
     if opt["epoch"] > 0:
         # load saved models
-        generator.load_state_dict(torch.load("%s/generator_%d.pth" %(opt["s"],
+        generator.load_state_dict(torch.load("%s/generator_%d.pth" %(opt["save"],
             opt["epoch"]) ))
-        encoder.load_state_dict(torch.load("%s/encoder_%d.pth" %(opt["s"],
+        encoder.load_state_dict(torch.load("%s/encoder_%d.pth" %(opt["save"],
             opt["epoch"] )))
-        D_VAE.load_state_dict(torch.load("%s/D_VAE_%d.pth" %(opt["s"],
+        D_VAE.load_state_dict(torch.load("%s/D_VAE_%d.pth" %(opt["save"],
             opt["epoch"] )))
-        D_LR.load_state_dict(torch.load("%s/D_LR_%d.pth" %(opt["s"],
+        D_LR.load_state_dict(torch.load("%s/D_LR_%d.pth" %(opt["save"],
             opt["epoch"] )))
-        VAE.load_state_dict(torch.load("%s/VAE_%d.pth" %(opt["s"], 
+        VAE.load_state_dict(torch.load("%s/VAE_%d.pth" %(opt["save"], 
             opt["epoch"]) ))
     else:
         # Initialise weights
@@ -125,7 +93,7 @@ if __name__ == "__main__":
         D_VAE.apply(weights_init)
         D_LR.apply(weights_init)
         VAE.apply(weights_init)
-    
+
     # construct optimizers for the 4 networks
     optimizer_G = optim.Adam(generator.parameters(), lr=opt["lr"], betas=(opt["b1"], opt["b2"]))
     optimizer_E = optim.Adam(encoder.parameters(), lr=opt["lr"], betas=(opt["b1"], opt["b2"]))
@@ -203,7 +171,7 @@ if __name__ == "__main__":
             batches_left = opt["n_epochs"]* len(dataloader) - batches_done
             time_left = datetime.timedelta(seconds=batches_left * (time.time() - prev_time))
             prev_time = time.time()
-       
+ 
             sys.stdout.write(
                     """\r[Epoch %d/%d] [Batch %d/%d] [G loss: %.3f, pixel loss: %.3f, kl loss: %.3f,
                     latent loss: %.3f, D_VAE loss: %.3f, D_LR loss: %.3f, Shape_VAE loss:
@@ -223,15 +191,17 @@ if __name__ == "__main__":
                         time_left,
                     )
             )
+            if i == 100:
+                break
         if epoch % opt["checkpoint_interval"] == 0:
             torch.save(generator.state_dict(), "%s/generator_%d.pth"
-                    %(opt["s"], epoch))
+                    %(opt["save"], epoch))
             torch.save(encoder.state_dict(), "%s/encoder_%d.pth"
-                    %(opt["s"], epoch))
+                    %(opt["save"], epoch))
             torch.save(D_VAE.state_dict(), "%s/D_VAE_%d.pth"
-                    %(opt["s"], epoch))
+                    %(opt["save"], epoch))
             torch.save(D_LR.state_dict(), "%s/D_LR_%d.pth"
-                    %(opt["s"], epoch))
+                    %(opt["save"], epoch))
             torch.save(VAE.state_dict(), "%s/VAE_%d.pth"
-                    %(opt["s"], epoch))
+                    %(opt["save"], epoch))
 
