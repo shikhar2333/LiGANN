@@ -2,9 +2,12 @@
 # Copying and distribution is allowed under AGPLv3 license
 import numpy as np
 from rdkit import Chem
+import torch
 def process_smiles(smiles):
-    strings = np.zeros((len(smiles), 163), dtype='uint8')
-    lengths = np.array([len(smile) for smile in smiles])
+    lengths = [len(smile) for smile in smiles]
+    strings = np.zeros(( len(smiles), max(lengths) + 2 ))
+    lengths.sort(reverse=True)
+    lengths = np.array(lengths)
 
     vocab_list = ["pad", "start", "end",
         "C", "c", "N", "n", "S", "s", "P", "O", "o",
@@ -32,4 +35,4 @@ def process_smiles(smiles):
                                                                           sstring)))
         strings[i, :len(vals)] = vals
     
-    return strings, lengths
+    return torch.tensor(strings).long(), lengths

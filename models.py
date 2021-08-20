@@ -5,6 +5,7 @@ import torch
 from torch.autograd import Variable
 from torch.nn import init
 from torch.nn.modules.conv import Conv3d
+from torch.nn.utils.rnn import pack_padded_sequence
 
 def Conv_Block_3D(input_channels, output_channels, normalize=True):
     layers = []
@@ -122,13 +123,27 @@ class CNN_Encoder(nn.Module):
         return x
 
 class MolDecoder(nn.Module):
-    def __init__(self, embed_size, hidden_size, vocab_size=39, num_layers=1) -> None:
+    def __init__(self, embed_size, hidden_size, vocab_size=39, num_layers=1):
+        super().__init__()
         self.embed_layer = nn.Embedding(vocab_size, embed_size)
         self.lstm_layer = nn.LSTM(embed_size, hidden_size, num_layers,
                 batch_first=True)
         self.final_layer = nn.Linear(hidden_size, vocab_size)
+        self.init_weights()
+
+    def init_weights(self):
+        self.embed_layer.weight.data.uniform_(-0.1, 0.1)
+        self.final_layer.weight.data.uniform_(-0.1, 0.1)
+        self.final_layer.bias.data.fill_(0)
+
     def forward(self, cnn_features, captions, lengths):
-        pass
+        embeddings = self.embed_layer(captions)
+        embeddings = torch.cat((cnn_features.unsqueeze(1), embeddings), 1)
+        packed = pack_padded_sequence(embeddings, lengths, batch_first=True)
+        hiddens, _ = self.lstm_layer(packed)
+        outputs = self.final_layer(hiddens[0])
+        return outputs
+
 
 # define weight initialization
 def weights_init(m):

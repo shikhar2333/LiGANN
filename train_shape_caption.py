@@ -1,13 +1,15 @@
 import argparse
 import os
 import molgrid
+from torch.autograd import Variable
 from models import Shape_VAE, CNN_Encoder, MolDecoder 
 import torch
 import torch.optim as optim
 import torch.nn as nn
+from torch.nn.utils.rnn import pack_padded_sequence
 from utils.process_smiles import process_smiles
 from utils.extract_sdf_file import extract_sdf_file
-from rdkit import Chem
+from rdkit import Chem, RDLogger 
 
 def init_weights(m):
     if isinstance(m, nn.Linear) or isinstance(m, nn.Conv3d):
@@ -23,9 +25,12 @@ def get_gmaker_eproviders(opt):
     return e, gmaker, dims
 
 if __name__ == "__main__":
-    # Loss functions
-    mae_loss = torch.nn.L1Loss()
+    # Loss function
+    cross_entropy_loss = nn.CrossEntropyLoss()
     cuda = True if torch.cuda.is_available() else False
+    capion_start = 100 
+    lg = RDLogger.logger()
+    lg.setLevel(RDLogger.CRITICAL)
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--epoch", type=int, default=0, help="epoch to start training from")
@@ -61,6 +66,7 @@ if __name__ == "__main__":
 
     VAE = Shape_VAE(dims).to('cuda')
     encoder = CNN_Encoder(dims).to('cuda')
+    decoder = MolDecoder(128, 256).to('cuda')
 
     if opt["epoch"] > 0:
         # load saved models
@@ -76,9 +82,13 @@ if __name__ == "__main__":
     # construct optimizers for the networks
     optimizer_VAE = optim.Adam(VAE.parameters(), lr=opt["lr"], betas=(opt["b1"],
         opt["b2"]))
+    caption_params = list(encoder.parameters()) + list(decoder.parameters())
+    optimizer_caption = optim.Adam(caption_params, lr=opt["lr"], betas=(opt["b1"], opt["b2"]))
 
     tensor_shape = (opt["batch_size"], ) + dims
     input_tensor = torch.zeros(tensor_shape, dtype=torch.float32, device='cuda')
+    caption_loss = 0.
+    torch.autograd.set_detect_anomaly(True)
 
     # train for n_epochs
     for epoch in range(opt["n_epochs"]):
@@ -106,10 +116,21 @@ if __name__ == "__main__":
                     input_tensor_modified, mu, logvar)
         total_loss.backward()
         optimizer_VAE.step()
-        print("[Epoch %d/%d] [VAE Loss: %f]" %(epoch,
-                    opt["n_epochs"], total_loss.item()) )
-        features = encoder(recon_x)
-        print(features.shape)
+
+        if epoch >= capion_start:
+            captions = valid_smiles.cuda()
+            targets = pack_padded_sequence(captions, lengths, batch_first=True)[0]
+            optimizer_caption.zero_grad()
+            features = encoder(recon_x.detach())
+            outputs = decoder(features, captions, lengths)
+            caption_loss = cross_entropy_loss(outputs, targets)
+            caption_loss.backward()
+            optimizer_caption.step()
+
+        cap_loss = caption_loss.item() if type(caption_loss) != float else 0. 
+        print("[Epoch %d/%d] [VAE Loss: %f] [Caption Loss: %f]" %(epoch,
+                    opt["n_epochs"], total_loss.item(), cap_loss))
+
     
         if epoch % opt["checkpoint_interval"] == 0:
             torch.save(VAE.state_dict(), "%s/VAE_%d.pth"
