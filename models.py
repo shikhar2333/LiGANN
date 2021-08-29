@@ -9,20 +9,20 @@ from torch.nn.utils.rnn import pack_padded_sequence
 
 def Conv_Block_3D(input_channels, output_channels, normalize=True):
     layers = []
-    layers += [nn.Conv3d(input_channels, output_channels, kernel_size=4,
-            stride=2, padding=1)]
+    layers.append(nn.Conv3d(input_channels, output_channels, kernel_size=4,
+            stride=2, padding=1))
     if normalize:
-        layers += [nn.BatchNorm3d(output_channels)]
-    layers += [nn.ReLU(inplace=True)]
+        layers.append(nn.BatchNorm3d(output_channels))
+    layers.append(nn.ReLU(inplace=True))
     return nn.Sequential(*layers)
 
 def Conv_Block_3D_Transposed(input_channels, output_channels, normalize=True):
     layers = []
-    layers += [nn.ConvTranspose3d(input_channels, output_channels, kernel_size=4,
-            stride=2, padding=1)]
+    layers.append(nn.ConvTranspose3d(input_channels, output_channels, kernel_size=4,
+            stride=2, padding=1))
     if normalize:
-        layers += [nn.BatchNorm3d(output_channels)]
-    layers += [nn.ReLU(inplace=True)]
+        layers.append(nn.BatchNorm3d(output_channels))
+    layers.append(nn.ReLU(inplace=True))
     return nn.Sequential(*layers)
 
 class Shape_VAE(nn.Module):
@@ -53,12 +53,12 @@ class Shape_VAE(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def encode(self, x):
-        x = self.sequence1(x)
-        x = self.sequence2(x)
-        x = self.sequence3(x)
-        x = x.view(x.size(0), -1)
+        x1 = self.sequence1(x)
+        x2 = self.sequence2(x1)
+        x3 = self.sequence3(x2)
+        x4 = x3.view(x3.size(0), -1)
         # Returns mu and log(sigma)
-        return self.fc1(x), self.fc2(x)
+        return self.fc1(x4), self.fc2(x4)
 
     def reparameterize(self, mu, logvar):
         std = logvar.mul(0.5).exp_()
@@ -67,18 +67,19 @@ class Shape_VAE(nn.Module):
         return eps.mul(std).add_(mu)
 
     def decode(self, z):
-        z = z.view(z.size(0), 64, 6, 6, 6)
-        z = self.sequence4(z)
-        z = self.sequence5(z)
-        z = self.sequence6(z)
-        return z
+        z1 = z.view(z.size(0), 64, 6, 6, 6)
+        z2 = self.sequence4(z1)
+        z3 = self.sequence5(z2)
+        z4 = self.sequence6(z3)
+        return z4
 
     def forward(self, x):
         mu, sigma = self.encode(x)
         z = self.reparameterize(mu, sigma)
-        z = self.fc3(z)
-        output = self.output(self.decode(z))
-        return self.sigmoid(output), mu, sigma
+        z1 = self.fc3(z)
+        output = self.output(self.decode(z1))
+        output1 = self.sigmoid(output)
+        return output1, mu, sigma
 
     def loss(self, reconstructed_x, x, mu, logvar):
         BCE_loss = F.binary_cross_entropy(reconstructed_x, x, reduction='mean')
@@ -95,31 +96,83 @@ class CNN_Encoder(nn.Module):
         layers = []
         # Define the VGG-16 network
 
-        # 2 conv layers followed by max poolingg
-        layers += [nn.Conv3d(channels, 32, padding=1, kernel_size=3,stride=1)]
-        layers += [nn.Conv3d(32, 32, padding=1,  kernel_size=3, stride=1)]
-        layers += [nn.MaxPool3d(stride=2, kernel_size=2)]
-        layers += [nn.ReLU()]
+        # 2 conv layers followed by max pooling
 
-        layers += [nn.Conv3d(32, 64, padding=1, kernel_size=3, stride=1)]
-        layers += [nn.Conv3d(64, 64, padding=1, kernel_size=3, stride=1)]
-        layers += [nn.MaxPool3d(stride=2, kernel_size=2)]
-        layers += [nn.ReLU()]
+        # First block
+        layers.append(nn.Conv3d(channels, 32, padding=1, kernel_size=3,stride=1))
+        layers.append(nn.BatchNorm3d(32))
+        layers.append(nn.ReLU())
+        layers.append(nn.Conv3d(32, 32, padding=1,  kernel_size=3, stride=1))
+        layers.append(nn.BatchNorm3d(32))
+        layers.append(nn.ReLU())
+        layers.append(nn.MaxPool3d(stride=2, kernel_size=2))
 
-        layers += [nn.Conv3d(64, 64, padding=1, kernel_size=3, stride=1)]
-        layers += [nn.Conv3d(64, 64, padding=1, kernel_size=3, stride=1)]
-        layers += [nn.Conv3d(64, 64, padding=1, kernel_size=3, stride=1)]
-        layers += [nn.MaxPool3d(stride=2, kernel_size=2)]
-        layers += [nn.ReLU()]
+        # Second block
+        layers.append(nn.Conv3d(32, 64, padding=1, kernel_size=3, stride=1))
+        layers.append(nn.BatchNorm3d(64))
+        layers.append(nn.ReLU())
+        layers.append(nn.Conv3d(64, 64, padding=1, kernel_size=3, stride=1))
+        layers.append(nn.BatchNorm3d(64))
+        layers.append(nn.ReLU())
+        layers.append(nn.MaxPool3d(stride=2, kernel_size=2))
+
+        # Third block
+        layers.append(nn.Conv3d(64, 128, padding=1, kernel_size=3, stride=1))
+        layers.append(nn.BatchNorm3d(128))
+        layers.append(nn.ReLU())
+        layers.append(nn.Conv3d(128, 128, padding=1, kernel_size=3, stride=1))
+        layers.append(nn.BatchNorm3d(128))
+        layers.append(nn.ReLU())
+        layers.append(nn.Conv3d(128, 128, padding=1, kernel_size=3, stride=1))
+        layers.append(nn.BatchNorm3d(128))
+        layers.append(nn.ReLU())
+#        layers.append(nn.MaxPool3d(stride=2, kernel_size=2))
+
+#        layers.append(nn.Conv3d(64, 64, padding=1, kernel_size=3, stride=1))
+#        layers.append(nn.Conv3d(64, 64, padding=1, kernel_size=3, stride=1))
+#        layers.append(nn.Conv3d(64, 64, padding=1, kernel_size=3, stride=1))
+#        layers.append(nn.MaxPool3d(stride=2, kernel_size=2))
+#        layers.append(nn.ReLU())
 
         self.features = nn.Sequential(*layers)
-        self.fc = nn.Linear(6*6*6*64, 128)
+        self.fc = nn.Linear(128, 256)
+        for m in self.modules():
+            if isinstance(m, torch.nn.Conv3d) or isinstance(m, torch.nn.Linear):
+                nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='leaky_relu')
+                if m.bias is not None:
+                    m.bias.detach().zero_()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.features(x)
-#        print(x.shape)
-        x = torch.flatten(x, 1)
-        x = self.fc(x)
+        x1 = self.features(x)
+        x2 = x1.mean(dim=2).mean(dim=2).mean(dim=2)
+        x3 = self.fc(x2)
+        return x3
+
+class EncoderCNN(nn.Module):
+    def __init__(self, in_layers=14):
+        super(EncoderCNN, self).__init__()
+        self.pool = nn.MaxPool3d((2, 2, 2))
+        self.relu = nn.ReLU()
+        layers = []
+        out_layers = 32
+
+        for i in range(8):
+            layers.append(nn.Conv3d(in_layers, out_layers, 3, bias=False, padding=1))
+            layers.append(nn.BatchNorm3d(out_layers))
+            layers.append(self.relu)
+            in_layers = out_layers
+            if (i + 1) % 2 == 0:
+                # Duplicate number of layers every alternating layer.
+                out_layers *= 2
+                layers.append(self.pool)
+        layers.pop()  # Remove the last max pooling layer!
+        self.fc1 = nn.Linear(256, 512)
+        self.network = nn.Sequential(*layers)
+
+    def forward(self, x):
+        x = self.network(x)
+        x = x.mean(dim=2).mean(dim=2).mean(dim=2)
+        x = self.relu(self.fc1(x))
         return x
 
 class MolDecoder(nn.Module):
@@ -129,20 +182,49 @@ class MolDecoder(nn.Module):
         self.lstm_layer = nn.LSTM(embed_size, hidden_size, num_layers,
                 batch_first=True)
         self.final_layer = nn.Linear(hidden_size, vocab_size)
-        self.init_weights()
+#        self.init_weights()
 
     def init_weights(self):
-        self.embed_layer.weight.data.uniform_(-0.1, 0.1)
-        self.final_layer.weight.data.uniform_(-0.1, 0.1)
+        torch.nn.init.xavier_uniform_(self.embed_layer.weight)
+        torch.nn.init.xavier_uniform_(self.final_layer.weight)
+        # self.embed_layer.weight.data.uniform_(-0.1, 0.1)
+        # self.final_layer.weight.data.uniform_(-0.1, 0.1)
         self.final_layer.bias.data.fill_(0)
 
     def forward(self, cnn_features, captions, lengths):
         embeddings = self.embed_layer(captions)
         embeddings = torch.cat((cnn_features.unsqueeze(1), embeddings), 1)
+        # print(embeddings.shape)
+        # lstm_out = self.lstm_layer(embeddings)
+        # print(lstm_out[0].shape)
+        # final_out = self.final_layer(lstm_out[0])
+        # print(final_out.shape)
         packed = pack_padded_sequence(embeddings, lengths, batch_first=True)
         hiddens, _ = self.lstm_layer(packed)
+        # print(hiddens[0].shape)
         outputs = self.final_layer(hiddens[0])
         return outputs
+
+    def beam_search_sample(self, cnn_features, max_len=163):
+        "Sample the smile representation given some encoded shape information"
+        sampled_smile_idx = []
+        inputs = cnn_features.unsqueeze(1)
+        cur = cnn_features[0]
+        states = None
+        for i in range(max_len):
+            hidden_states, states = self.lstm_layer(inputs, states)
+            squeezed_hidden = hidden_states.squeeze(1)
+#            print(i,squeezed_hidden)
+            for i in range(5):
+                print(i,squeezed_hidden[i])
+            outputs = self.final_layer(hidden_states.squeeze(1))
+#            print(i,squeezed_hidden)
+            predicted = outputs.max(1)[1]
+            sampled_smile_idx.append(predicted)
+            inputs = self.embed_layer(predicted)
+            inputs = inputs.unsqueeze(1)
+        return sampled_smile_idx
+
 
 
 # define weight initialization
@@ -366,6 +448,7 @@ class MultiDiscriminator(nn.Module):
         return outputs
 
 if __name__ == "__main__":
-    encoder_model = Shape_VAE( (14, 48, 48, 48) )
+    encoder_model = EncoderCNN()
     rand_tensor = torch.randn(1, 14, 48, 48, 48)
+    encoder_output = encoder_model(rand_tensor)
 

@@ -78,10 +78,10 @@ if __name__ == "__main__":
          sdf_files = extract_sdf_file(batch.coord_sets[0].src, opt["data_dir"])
          suppl = Chem.MolFromMolFile(sdf_files)                       
          if suppl:
-             tensor_filename = "voxel_tensor" + "_" + str(cnt) + ".pt"
+#             tensor_filename = "voxel_tensor" + "_" + str(cnt) + ".pt"
              smile_string = Chem.MolToSmiles(suppl)
-             torch.save(input_tensor, tensor_filename)
-             shutil.move(tensor_filename, opt["voxel_dir"] + "/" + tensor_filename)
+#             torch.save(input_tensor, tensor_filename)
+#             shutil.move(tensor_filename, opt["voxel_dir"] + "/" + tensor_filename)
              maxi = max(maxi, len(smile_string))
              if smile_string != "[Y]":
                  fp.write(smile_string + "\n")
