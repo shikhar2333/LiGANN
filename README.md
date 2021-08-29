@@ -33,6 +33,9 @@ conda env create -f environment.yml
 - [x] script to get the number of .gninatypes files for each of the docked structures.
 - [x] get the sdf file for each of the docked protein structure.
 - [x] Script to generate the types file containing examples(.gninatypes files) used for training.
+- [ ] Add code for beam search/ probabilistic rnn sampling to generate smile representations.
+- [ ] Incorporate selfies representations instead of using smiles.
+- [ ] Add attention mechanism to the existing MolDecoder model.
 
 ## Note:
 ```
