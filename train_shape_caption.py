@@ -2,12 +2,12 @@ import argparse
 import os
 import molgrid
 import matplotlib.pyplot as plt
-import numpy as np
+from torch.optim import optimizer
 from models import Shape_VAE, CNN_Encoder, MolDecoder, EncoderCNN 
 import torch
 import torch.optim as optim
 import torch.nn as nn
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+from torch.nn.utils.rnn import pack_padded_sequence
 from utils.process_smiles import process_smiles
 from utils.extract_sdf_file import extract_sdf_file
 from rdkit import Chem, RDLogger 
@@ -61,17 +61,8 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=0.0001, help="adam: learning rate")
     parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first order momentum of gradient")
     parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of first order momentum of gradient")
-    parser.add_argument("--n_cpu", type=int, default=8, help="number of cpu threads to use during batch generation")
-    parser.add_argument("--latent_dim", type=int, default=8, help="number of latent codes")
-    parser.add_argument("--sample_interval", type=int, default=400, help="interval between saving generator samples")
     parser.add_argument("--checkpoint_interval", type=int, default=10, help="interval between model checkpoints")
-    parser.add_argument("--lambda_pixel", type=float, default=10, help="pixelwise loss weight")
-    parser.add_argument("--lambda_latent", type=float, default=0.1, help="latent loss weight")
-    parser.add_argument("--lambda_kl", type=float, default=0.01, help="kullback-leibler loss weight")
     
-    parser.add_argument("-v", "--voxels",
-    default="/crossdock_train_data/voxel_data", help="""Path to input
-            voxel data""")
     parser.add_argument("-s", "--save",
             default="/crossdock_train_data/saved_models", help="""Path for saving trained models""")
     opt = vars(parser.parse_args())
@@ -82,9 +73,8 @@ if __name__ == "__main__":
 
     VAE = Shape_VAE(dims).to('cuda')
 #    encoder = EncoderCNN().to('cuda') 
-#    decoder = MolDecoder(512, 1024, vocab_size=40, num_layers=1).to('cuda')
     encoder = CNN_Encoder(dims).to('cuda')
-    decoder = MolDecoder(256, 512, vocab_size=36, num_layers=1).to('cuda')
+    decoder = MolDecoder(512, 1024, vocab_size=36, num_layers=1).to('cuda')
 
     if opt["epoch"] > 0:
         # load saved models
@@ -98,13 +88,15 @@ if __name__ == "__main__":
         # Initialise weights
         VAE.apply(init_weights)
 #        encoder.apply(init_weights)
-        decoder.apply(init_weights)
+#        decoder.apply(init_weights)
 
     # construct optimizers for the networks
     optimizer_VAE = optim.Adam(VAE.parameters(), lr=opt["lr"])
     VAE.train()
-    caption_params = list(encoder.parameters()) + list(decoder.parameters())
-    optimizer_caption = optim.Adam(caption_params, lr=0.001)
+    optimizer_encoder = optim.Adam(encoder.parameters(), lr=0.01)
+    optimizer_decoder = optim.Adam(decoder.parameters(), lr=0.01)
+#    caption_params = list(encoder.parameters()) + list(decoder.parameters())
+#    optimizer_caption = optim.Adam(caption_params, lr=0.001)
     encoder.train()
     decoder.train()
 
@@ -116,7 +108,7 @@ if __name__ == "__main__":
     # train for n_epochs
     for epoch in range(opt["epoch"], opt["epoch"]+opt["n_epochs"]):
         mol_batch = e.next_batch(opt["batch_size"])
-        gmaker.forward(mol_batch, input_tensor, 0, random_rotation=False)
+        gmaker.forward(mol_batch, input_tensor, 0, random_rotation=True)
 
         gninatype_files = [mol_batch[i].coord_sets[0].src for i in range(opt["batch_size"])]
         sdf_files = [extract_sdf_file(gninatype_files[i], opt["data_dir"]) for i in
@@ -126,8 +118,10 @@ if __name__ == "__main__":
         suppl = [Chem.MolFromMolFile(sdf_files[i]) for i in range(opt["batch_size"])] 
         for i in range(opt["batch_size"]):
             if suppl[i]:
-                valid_smiles.append(Chem.MolToSmiles(suppl[i]))
-                valid_tensors.append(i)
+                smile_str = Chem.MolToSmiles(suppl[i])
+                if smile_str not in valid_smiles:
+                    valid_smiles.append(smile_str)
+                    valid_tensors.append(i)
 
         input_tensor_modified = torch.index_select(input_tensor, 0,
                 torch.tensor(valid_tensors).cuda())
@@ -141,16 +135,14 @@ if __name__ == "__main__":
             captions = valid_smiles.cuda()
             packed = pack_padded_sequence(captions, lengths, batch_first=True)
             targets = packed[0]
-            optimizer_caption.zero_grad()
+            optimizer_decoder.zero_grad()
+            optimizer_encoder.zero_grad()
             features = encoder(recon_x)
             outputs = decoder(features, captions, lengths)
             caption_loss = cross_entropy_loss(outputs, targets)
             caption_loss.backward(retain_graph=True)
-            a = list(decoder.parameters())[0].grad
-#            print(a)
-            optimizer_caption.step()
-            b = list(decoder.parameters())[0].clone()
-#            print(torch.equal(a.data,b.data))
+            optimizer_encoder.step()
+            optimizer_decoder.step()
 
         optimizer_VAE.zero_grad()
         total_loss.backward()
@@ -170,9 +162,6 @@ if __name__ == "__main__":
                     %(opt["save"], epoch))
 #                loss.append(cap_loss)
 #                iters.append(epoch)
-        if epoch % 50000:
-            for param_group in optimizer_caption.param_groups:
-                lr = param_group["lr"] / 2.
-                param_group["lr"] = lr
-#    plot_loss(np.arange(len(loss)), loss)
+
+#    plot_loss(iters, loss)
 

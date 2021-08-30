@@ -126,16 +126,21 @@ class CNN_Encoder(nn.Module):
         layers.append(nn.Conv3d(128, 128, padding=1, kernel_size=3, stride=1))
         layers.append(nn.BatchNorm3d(128))
         layers.append(nn.ReLU())
-#        layers.append(nn.MaxPool3d(stride=2, kernel_size=2))
+        layers.append(nn.MaxPool3d(stride=2, kernel_size=2))
 
-#        layers.append(nn.Conv3d(64, 64, padding=1, kernel_size=3, stride=1))
-#        layers.append(nn.Conv3d(64, 64, padding=1, kernel_size=3, stride=1))
-#        layers.append(nn.Conv3d(64, 64, padding=1, kernel_size=3, stride=1))
-#        layers.append(nn.MaxPool3d(stride=2, kernel_size=2))
-#        layers.append(nn.ReLU())
+        layers.append(nn.Conv3d(128, 256, padding=1, kernel_size=3, stride=1))
+        layers.append(nn.BatchNorm3d(256))
+        layers.append(nn.ReLU())
+        layers.append(nn.Conv3d(256, 256, padding=1, kernel_size=3, stride=1))
+        layers.append(nn.BatchNorm3d(256))
+        layers.append(nn.ReLU())
+        layers.append(nn.Conv3d(256, 256, padding=1, kernel_size=3, stride=1))
+        layers.append(nn.BatchNorm3d(256))
+        layers.append(nn.ReLU())
+        layers.append(nn.MaxPool3d(stride=2, kernel_size=2))
 
         self.features = nn.Sequential(*layers)
-        self.fc = nn.Linear(128, 256)
+        self.fc = nn.Linear(256, 512)
         for m in self.modules():
             if isinstance(m, torch.nn.Conv3d) or isinstance(m, torch.nn.Linear):
                 nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='leaky_relu')
@@ -145,8 +150,7 @@ class CNN_Encoder(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x1 = self.features(x)
         x2 = x1.mean(dim=2).mean(dim=2).mean(dim=2)
-        x3 = self.fc(x2)
-        return x3
+        return self.fc(x2)
 
 class EncoderCNN(nn.Module):
     def __init__(self, in_layers=14):
@@ -182,7 +186,7 @@ class MolDecoder(nn.Module):
         self.lstm_layer = nn.LSTM(embed_size, hidden_size, num_layers,
                 batch_first=True)
         self.final_layer = nn.Linear(hidden_size, vocab_size)
-#        self.init_weights()
+        self.init_weights()
 
     def init_weights(self):
         torch.nn.init.xavier_uniform_(self.embed_layer.weight)
@@ -202,24 +206,23 @@ class MolDecoder(nn.Module):
         packed = pack_padded_sequence(embeddings, lengths, batch_first=True)
         hiddens, _ = self.lstm_layer(packed)
         # print(hiddens[0].shape)
-        outputs = self.final_layer(hiddens[0])
-        return outputs
+        return self.final_layer(hiddens[0])
 
     def beam_search_sample(self, cnn_features, max_len=163):
         "Sample the smile representation given some encoded shape information"
         sampled_smile_idx = []
         inputs = cnn_features.unsqueeze(1)
-        cur = cnn_features[0]
         states = None
         for i in range(max_len):
             hidden_states, states = self.lstm_layer(inputs, states)
             squeezed_hidden = hidden_states.squeeze(1)
 #            print(i,squeezed_hidden)
-            for i in range(5):
-                print(i,squeezed_hidden[i])
+#            for i in range(5):
+#                print(i,squeezed_hidden[i])
             outputs = self.final_layer(hidden_states.squeeze(1))
 #            print(i,squeezed_hidden)
             predicted = outputs.max(1)[1]
+            print("predicted: ", predicted)
             sampled_smile_idx.append(predicted)
             inputs = self.embed_layer(predicted)
             inputs = inputs.unsqueeze(1)
