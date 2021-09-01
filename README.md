@@ -55,3 +55,35 @@ gives the source ligand file for the first example of the batch.
 python ligann.py -i <input_smiles_file>  -v <voxel_tensors_dir> -s
 <saved_models_dir>
 ```
+## Available channels in libmolgrid for voxelisation:
+### Protein channels
+- Hydrogen
+- PolarHydrogen
+- AliphaticCarbonXSHydrophobe
+- AliphaticCarbonXSNonHydrophobe
+- AromaticCarbonXSHydrophobe
+- AromaticCarbonXSNonHydrophobe
+- Nitrogen
+- NitrogenXSDonor
+- NitrogenXSDonorAcceptor
+- NitrogenXSAcceptor
+- Oxygen
+- OxygenXSDonor
+- OxygenXSDonorAcceptor
+
+### Ligand channels
+- OxygenXSAcceptor
+- Sulfur
+- SulfurAcceptor
+- Phosphorus
+- Fluorine
+- Chlorine
+- Bromine
+- Iodine
+- Magnesium
+- Manganese
+- Zinc
+- Calcium
+- Iron
+- GenericMetal
+- Boron
