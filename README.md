@@ -70,9 +70,10 @@ python ligann.py -i <input_smiles_file>  -v <voxel_tensors_dir> -s
 - Oxygen
 - OxygenXSDonor
 - OxygenXSDonorAcceptor
+- OxygenXSAcceptor
 
 ### Ligand channels
-- OxygenXSAcceptor
+
 - Sulfur
 - SulfurAcceptor
 - Phosphorus
