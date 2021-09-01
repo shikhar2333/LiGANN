@@ -19,10 +19,13 @@ def init_weights(m):
 
 def get_gmaker_eproviders(opt):
     e = molgrid.ExampleProvider(data_root=opt["data_dir"],
-            cache_structs=False, shuffle=True)
+            cache_structs=False, shuffle=True, stratify_receptor=True,
+            labelpos=0,
+            recmolcache="/scratch/shubham/crossdock_data/crossdock2020_rec.molcache2",
+            ligmolcache="/scratch/shubham/crossdock_data/lig.molcache2")
     e.populate(opt["train_types"])
     gmaker = molgrid.GridMaker()
-    dims = gmaker.grid_dimensions(e.num_types()//2)
+    dims = gmaker.grid_dimensions(e.num_types())
     return e, gmaker, dims
 
 def loss_function(recon_x, x, mu, logvar):
@@ -53,27 +56,27 @@ if __name__ == "__main__":
             help="epoch at which caption training starts")
     parser.add_argument("--batch_size", type=int, default=8, help="size of the batches")
     parser.add_argument("-d", "--data_dir", type=str,
-            default="/crossdock_train_data/crossdock_data/structs",
+            default="/scratch/shubham/crossdock_data/structs",
             help="""Root dir for data""")
     parser.add_argument("--train_types", type=str,
-            default="/crossdock_train_data/crossdock_data/training_example.types",
+            default="/scratch/shubham/crossdock_data/training_example.types",
             help="train_types file path")
     parser.add_argument("--lr", type=float, default=0.0001, help="adam: learning rate")
     parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first order momentum of gradient")
     parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of first order momentum of gradient")
-    parser.add_argument("--checkpoint_interval", type=int, default=10, help="interval between model checkpoints")
+    parser.add_argument("--checkpoint_interval", type=int, default=1000, help="interval between model checkpoints")
     
     parser.add_argument("-s", "--save",
-            default="/crossdock_train_data/saved_models", help="""Path for saving trained models""")
+            default="/scratch/shubham/saved_models", help="""Path for saving trained models""")
     opt = vars(parser.parse_args())
     
     os.makedirs(opt["save"], exist_ok=True)
     
     e, gmaker, dims = get_gmaker_eproviders(opt)
 
-    VAE = Shape_VAE(dims).to('cuda')
+    VAE = Shape_VAE().to('cuda')
 #    encoder = EncoderCNN().to('cuda') 
-    encoder = CNN_Encoder(dims).to('cuda')
+    encoder = CNN_Encoder().to('cuda')
     decoder = MolDecoder(512, 1024, vocab_size=36, num_layers=1).to('cuda')
 
     if opt["epoch"] > 0:
@@ -95,8 +98,7 @@ if __name__ == "__main__":
     VAE.train()
     optimizer_encoder = optim.Adam(encoder.parameters(), lr=0.01)
     optimizer_decoder = optim.Adam(decoder.parameters(), lr=0.01)
-#    caption_params = list(encoder.parameters()) + list(decoder.parameters())
-#    optimizer_caption = optim.Adam(caption_params, lr=0.001)
+#    scheduler_decoder = optim.lr_scheduler.ReduceLROnPlateau(optimizer_decoder)
     encoder.train()
     decoder.train()
 
@@ -109,8 +111,7 @@ if __name__ == "__main__":
     for epoch in range(opt["epoch"], opt["epoch"]+opt["n_epochs"]):
         mol_batch = e.next_batch(opt["batch_size"])
         gmaker.forward(mol_batch, input_tensor, 0, random_rotation=True)
-
-        gninatype_files = [mol_batch[i].coord_sets[0].src for i in range(opt["batch_size"])]
+        gninatype_files = [mol_batch[i].coord_sets[1].src for i in range(opt["batch_size"])]
         sdf_files = [extract_sdf_file(gninatype_files[i], opt["data_dir"]) for i in
                 range(opt["batch_size"])]
 
@@ -123,7 +124,7 @@ if __name__ == "__main__":
                     valid_smiles.append(smile_str)
                     valid_tensors.append(i)
 
-        input_tensor_modified = torch.index_select(input_tensor, 0,
+        input_tensor_modified = torch.index_select(input_tensor[:, :14], 0,
                 torch.tensor(valid_tensors).cuda())
 
         recon_x, mu, logvar = VAE(input_tensor_modified)
@@ -149,6 +150,7 @@ if __name__ == "__main__":
         optimizer_VAE.step()
 
         cap_loss = caption_loss.item() if type(caption_loss) != float else 0. 
+#        scheduler_decoder.step(cap_loss)
         print("[Epoch %d/%d] [VAE Loss: %f] [Caption Loss: %f]" %(epoch,
                     opt["epoch"] + opt["n_epochs"], total_loss.item(), cap_loss))
     
