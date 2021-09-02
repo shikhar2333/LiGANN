@@ -29,9 +29,9 @@ class Shape_VAE(nn.Module):
     """
     Returns autoencoded shape representation of the ligand
     """
-    def __init__(self, ligand_voxel_shape) -> None:
+    def __init__(self,in_channels=14) -> None:
         super().__init__()
-        channels, _, _, _ = ligand_voxel_shape
+        channels = in_channels
         # Encoder Model
         self.sequence1 = Conv_Block_3D(channels, 32)
         self.sequence2 = Conv_Block_3D(32, 64)
@@ -90,9 +90,9 @@ class CNN_Encoder(nn.Module):
     '''
     CNN Network which encodes the voxelised ligands into a vectorised form 
     '''
-    def __init__(self, ligand_voxel_shape) -> None:
+    def __init__(self, in_channels=14) -> None:
         super().__init__()
-        channels, _, _, _ = ligand_voxel_shape
+        channels = in_channels
         layers = []
         # Define the VGG-16 network
 
@@ -189,23 +189,15 @@ class MolDecoder(nn.Module):
         self.init_weights()
 
     def init_weights(self):
-        torch.nn.init.xavier_uniform_(self.embed_layer.weight)
-        torch.nn.init.xavier_uniform_(self.final_layer.weight)
-        # self.embed_layer.weight.data.uniform_(-0.1, 0.1)
-        # self.final_layer.weight.data.uniform_(-0.1, 0.1)
+        self.embed_layer.weight.data.uniform_(-0.1, 0.1)
+        self.final_layer.weight.data.uniform_(-0.1, 0.1)
         self.final_layer.bias.data.fill_(0)
 
     def forward(self, cnn_features, captions, lengths):
         embeddings = self.embed_layer(captions)
         embeddings = torch.cat((cnn_features.unsqueeze(1), embeddings), 1)
-        # print(embeddings.shape)
-        # lstm_out = self.lstm_layer(embeddings)
-        # print(lstm_out[0].shape)
-        # final_out = self.final_layer(lstm_out[0])
-        # print(final_out.shape)
         packed = pack_padded_sequence(embeddings, lengths, batch_first=True)
         hiddens, _ = self.lstm_layer(packed)
-        # print(hiddens[0].shape)
         return self.final_layer(hiddens[0])
 
     def beam_search_sample(self, cnn_features, max_len=163):
@@ -220,9 +212,8 @@ class MolDecoder(nn.Module):
 #            for i in range(5):
 #                print(i,squeezed_hidden[i])
             outputs = self.final_layer(hidden_states.squeeze(1))
-#            print(i,squeezed_hidden)
             predicted = outputs.max(1)[1]
-            print("predicted: ", predicted)
+            print(predicted)
             sampled_smile_idx.append(predicted)
             inputs = self.embed_layer(predicted)
             inputs = inputs.unsqueeze(1)
