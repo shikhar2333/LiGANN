@@ -2,14 +2,14 @@ import argparse
 import os
 import molgrid
 import matplotlib.pyplot as plt
-from torch.optim import optimizer
 from models import Shape_VAE, CNN_Encoder, MolDecoder, EncoderCNN 
 import torch
 import torch.optim as optim
 import torch.nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence
-from utils.process_smiles import process_smiles
+from utils.process_selfies import encode_selfies
 from utils.extract_sdf_file import extract_sdf_file
+import selfies as sf
 from rdkit import Chem, RDLogger 
 
 def init_weights(m):
@@ -21,20 +21,19 @@ def get_gmaker_eproviders(opt):
     e = molgrid.ExampleProvider(data_root=opt["data_dir"],
             cache_structs=False, shuffle=True, stratify_receptor=True,
             labelpos=0,
-            recmolcache="/scratch/shubham/crossdock_data/crossdock2020_rec.molcache2",
-            ligmolcache="/scratch/shubham/crossdock_data/lig.molcache2")
+            recmolcache="/scratch/shubham/crossdock_data/crossdock2020_rec.molcache2")
     e.populate(opt["train_types"])
     gmaker = molgrid.GridMaker()
     dims = gmaker.grid_dimensions(e.num_types())
     return e, gmaker, dims
 
-def loss_function(recon_x, x, mu, logvar):
-    reconstruction_function = nn.BCELoss()
-    reconstruction_function.size_average = False
-    BCE = reconstruction_function(recon_x, x)
-    KLD_element = mu.pow(2).add_(logvar.exp()).mul_(-1).add_(1).add_(logvar)
-    KLD = torch.sum(KLD_element).mul_(-0.5)
-    return BCE + KLD
+#def loss_function(recon_x, x, mu, logvar):
+#    reconstruction_function = nn.BCELoss()
+#    reconstruction_function.size_average = False
+#    BCE = reconstruction_function(recon_x, x)
+#    KLD_element = mu.pow(2).add_(logvar.exp()).mul_(-1).add_(1).add_(logvar)
+#    KLD = torch.sum(KLD_element).mul_(-0.5)
+#    return BCE + KLD
 
 def plot_loss(iterations, loss_values):
     plt.plot(iterations, loss_values)
@@ -77,7 +76,7 @@ if __name__ == "__main__":
     VAE = Shape_VAE().to('cuda')
 #    encoder = EncoderCNN().to('cuda') 
     encoder = CNN_Encoder().to('cuda')
-    decoder = MolDecoder(512, 1024, vocab_size=36, num_layers=1).to('cuda')
+    decoder = MolDecoder(512, 1024, vocab_size=107, num_layers=1).to('cuda')
 
     if opt["epoch"] > 0:
         # load saved models
@@ -92,7 +91,6 @@ if __name__ == "__main__":
         VAE.apply(init_weights)
 #        encoder.apply(init_weights)
 #        decoder.apply(init_weights)
-
     # construct optimizers for the networks
     optimizer_VAE = optim.Adam(VAE.parameters(), lr=opt["lr"])
     VAE.train()
@@ -110,30 +108,24 @@ if __name__ == "__main__":
     # train for n_epochs
     for epoch in range(opt["epoch"], opt["epoch"]+opt["n_epochs"]):
         mol_batch = e.next_batch(opt["batch_size"])
-        gmaker.forward(mol_batch, input_tensor, 0, random_rotation=True)
+        gmaker.forward(mol_batch, input_tensor, 2, random_rotation=True)
         gninatype_files = [mol_batch[i].coord_sets[1].src for i in range(opt["batch_size"])]
         sdf_files = [extract_sdf_file(gninatype_files[i], opt["data_dir"]) for i in
                 range(opt["batch_size"])]
 
-        valid_smiles, valid_tensors = [], []
-        suppl = [Chem.MolFromMolFile(sdf_files[i]) for i in range(opt["batch_size"])] 
-        for i in range(opt["batch_size"]):
-            if suppl[i]:
-                smile_str = Chem.MolToSmiles(suppl[i])
-                if smile_str not in valid_smiles:
-                    valid_smiles.append(smile_str)
-                    valid_tensors.append(i)
-
-        input_tensor_modified = torch.index_select(input_tensor[:, :14], 0,
-                torch.tensor(valid_tensors).cuda())
-
+        input_tensor_modified = input_tensor[:, :14]
         recon_x, mu, logvar = VAE(input_tensor_modified)
         total_loss, BCE_loss, KLD = VAE.loss(recon_x,
                     input_tensor_modified, mu, logvar)
 
         if epoch >= opt["cap_start"]:
-            valid_smiles, lengths = process_smiles(valid_smiles)
-            captions = valid_smiles.cuda()
+            selfies = []
+            suppl = [Chem.MolFromMolFile(sdf_files[i]) for i in range(opt["batch_size"])] 
+            for i in range(opt["batch_size"]):
+                smile_str = Chem.MolToSmiles(suppl[i])
+                selfies.append(sf.encoder(smile_str))
+            selfies, lengths = encode_selfies(selfies)
+            captions = selfies.cuda()
             packed = pack_padded_sequence(captions, lengths, batch_first=True)
             targets = packed[0]
             optimizer_decoder.zero_grad()
