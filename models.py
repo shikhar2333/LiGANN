@@ -6,6 +6,7 @@ from torch.autograd import Variable
 from torch.nn import init
 from torch.nn.modules.conv import Conv3d
 from torch.nn.utils.rnn import pack_padded_sequence
+import numpy as np
 
 def Conv_Block_3D(input_channels, output_channels, normalize=True):
     layers = []
@@ -38,11 +39,11 @@ class Shape_VAE(nn.Module):
         self.sequence3 = Conv_Block_3D(64, 64)
 
         # return mu, log(sigma)
-        self.fc1 = nn.Linear(64*6*6*6, 128)
-        self.fc2 = nn.Linear(64*6*6*6, 128)
+        self.fc1 = nn.Linear(64*3*3*3, 128)
+        self.fc2 = nn.Linear(64*3*3*3, 128)
 
         # Decoder Model
-        self.fc3 = nn.Linear(128, 64*6*6*6)
+        self.fc3 = nn.Linear(128, 64*3*3*3)
 
         self.sequence4 = Conv_Block_3D_Transposed(64, 64)
         self.sequence5 = Conv_Block_3D_Transposed(64, 32)
@@ -67,7 +68,7 @@ class Shape_VAE(nn.Module):
         return eps.mul(std).add_(mu)
 
     def decode(self, z):
-        z1 = z.view(z.size(0), 64, 6, 6, 6)
+        z1 = z.view(z.size(0), 64, 3, 3, 3)
         z2 = self.sequence4(z1)
         z3 = self.sequence5(z2)
         z4 = self.sequence6(z3)
@@ -82,8 +83,8 @@ class Shape_VAE(nn.Module):
         return output1, mu, sigma
 
     def loss(self, reconstructed_x, x, mu, logvar):
-        BCE_loss = F.binary_cross_entropy(reconstructed_x, x, reduction='mean')
-        KLD = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
+        BCE_loss = F.binary_cross_entropy(reconstructed_x, x, reduction='sum')
+        KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
         return BCE_loss + KLD, BCE_loss, KLD
 
 class CNN_Encoder(nn.Module):
@@ -128,19 +129,19 @@ class CNN_Encoder(nn.Module):
         layers.append(nn.ReLU())
         layers.append(nn.MaxPool3d(stride=2, kernel_size=2))
 
-        layers.append(nn.Conv3d(128, 256, padding=1, kernel_size=3, stride=1))
-        layers.append(nn.BatchNorm3d(256))
-        layers.append(nn.ReLU())
-        layers.append(nn.Conv3d(256, 256, padding=1, kernel_size=3, stride=1))
-        layers.append(nn.BatchNorm3d(256))
-        layers.append(nn.ReLU())
-        layers.append(nn.Conv3d(256, 256, padding=1, kernel_size=3, stride=1))
-        layers.append(nn.BatchNorm3d(256))
-        layers.append(nn.ReLU())
-        layers.append(nn.MaxPool3d(stride=2, kernel_size=2))
+#        layers.append(nn.Conv3d(128, 256, padding=1, kernel_size=3, stride=1))
+#        layers.append(nn.BatchNorm3d(256))
+#        layers.append(nn.ReLU())
+#        layers.append(nn.Conv3d(256, 256, padding=1, kernel_size=3, stride=1))
+#        layers.append(nn.BatchNorm3d(256))
+#        layers.append(nn.ReLU())
+#        layers.append(nn.Conv3d(256, 256, padding=1, kernel_size=3, stride=1))
+#        layers.append(nn.BatchNorm3d(256))
+#        layers.append(nn.ReLU())
+#        layers.append(nn.MaxPool3d(stride=2, kernel_size=2))
 
         self.features = nn.Sequential(*layers)
-        self.fc = nn.Linear(256, 512)
+        self.fc = nn.Linear(128, 256)
         for m in self.modules():
             if isinstance(m, torch.nn.Conv3d) or isinstance(m, torch.nn.Linear):
                 nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='leaky_relu')
@@ -149,6 +150,7 @@ class CNN_Encoder(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x1 = self.features(x)
+        print(x1.shape)
         x2 = x1.mean(dim=2).mean(dim=2).mean(dim=2)
         return self.fc(x2)
 
@@ -218,6 +220,46 @@ class MolDecoder(nn.Module):
             inputs = self.embed_layer(predicted)
             inputs = inputs.unsqueeze(1)
         return sampled_smile_idx
+    def sample_prob(self, features, max_len=183, states=None):
+        """Samples SMILES tockens for given shape features (probalistic picking)."""
+        sampled_ids = []
+        inputs = features.unsqueeze(1)
+        for i in range(max_len):  # maximum sampling length
+            hiddens, states = self.lstm_layer(inputs, states)
+            outputs = self.final_layer(hiddens.squeeze(1))
+            if i == 0:
+                predicted = outputs.max(1)[1]
+            else:
+                probs = F.softmax(outputs, dim=1)
+
+                # Probabilistic sample tokens
+                if probs.is_cuda:
+                    probs_np = probs.data.cpu().numpy()
+                else:
+                    probs_np = probs.data.numpy()
+
+                rand_num = np.random.rand(probs_np.shape[0])
+                iter_sum = np.zeros((probs_np.shape[0],))
+                tokens = np.zeros(probs_np.shape[0], dtype=np.int)
+
+                for i in range(probs_np.shape[1]):
+                    c_element = probs_np[:, i]
+                    iter_sum += c_element
+                    valid_token = rand_num < iter_sum
+                    update_indecies = np.logical_and(valid_token,
+                                                     np.logical_not(tokens.astype(np.bool)))
+                    tokens[update_indecies] = i
+
+                # put back on the GPU.
+                if probs.is_cuda:
+                    predicted = Variable(torch.LongTensor(tokens.astype(np.int)).cuda())
+                else:
+                    predicted = Variable(torch.LongTensor(tokens.astype(np.int)))
+
+            sampled_ids.append(predicted)
+            inputs = self.embed_layer(predicted)
+            inputs = inputs.unsqueeze(1)
+        return sampled_ids
 
 
 
@@ -442,7 +484,8 @@ class MultiDiscriminator(nn.Module):
         return outputs
 
 if __name__ == "__main__":
-    encoder_model = EncoderCNN()
-    rand_tensor = torch.randn(1, 14, 48, 48, 48)
+    encoder_model = CNN_Encoder()
+    rand_tensor = torch.randn(1, 14, 24,24, 24)
     encoder_output = encoder_model(rand_tensor)
+    print(encoder_output.shape)
 

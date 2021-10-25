@@ -1,5 +1,4 @@
 .vscode
-crossdock_smiles.smi
 __pycache__
 .ipynb_checkpoints
 loss.csv

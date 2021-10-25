@@ -1,8 +1,10 @@
 import argparse
+import sys
 import os
 import molgrid
 import matplotlib.pyplot as plt
-from models import Shape_VAE, CNN_Encoder, MolDecoder, EncoderCNN 
+from models import Shape_VAE, CNN_Encoder, MolDecoder
+from networks import VAE
 import torch
 import torch.optim as optim
 import torch.nn as nn
@@ -23,17 +25,17 @@ def get_gmaker_eproviders(opt):
             labelpos=0,
             recmolcache="/scratch/shubham/crossdock_data/crossdock2020_rec.molcache2")
     e.populate(opt["train_types"])
-    gmaker = molgrid.GridMaker()
+    gmaker = molgrid.GridMaker(dimension=11.5)
     dims = gmaker.grid_dimensions(e.num_types())
     return e, gmaker, dims
 
-#def loss_function(recon_x, x, mu, logvar):
-#    reconstruction_function = nn.BCELoss()
-#    reconstruction_function.size_average = False
-#    BCE = reconstruction_function(recon_x, x)
-#    KLD_element = mu.pow(2).add_(logvar.exp()).mul_(-1).add_(1).add_(logvar)
-#    KLD = torch.sum(KLD_element).mul_(-0.5)
-#    return BCE + KLD
+def loss_function(recon_x, x, mu, logvar):
+    reconstruction_function = nn.BCELoss()
+    reconstruction_function.size_average = False
+    BCE = reconstruction_function(recon_x, x)
+    KLD_element = mu.pow(2).add_(logvar.exp()).mul_(-1).add_(1).add_(logvar)
+    KLD = torch.sum(KLD_element).mul_(-0.5)
+    return BCE + KLD
 
 def plot_loss(iterations, loss_values):
     plt.plot(iterations, loss_values)
@@ -53,14 +55,14 @@ if __name__ == "__main__":
     parser.add_argument("--n_epochs", type=int, default=50, help="number of epochs of training")
     parser.add_argument("--cap_start", type=int, default=capion_start,
             help="epoch at which caption training starts")
-    parser.add_argument("--batch_size", type=int, default=8, help="size of the batches")
+    parser.add_argument("--batch_size", type=int, default=32, help="size of the batches")
     parser.add_argument("-d", "--data_dir", type=str,
             default="/scratch/shubham/crossdock_data/structs",
             help="""Root dir for data""")
     parser.add_argument("--train_types", type=str,
             default="/scratch/shubham/crossdock_data/training_example.types",
             help="train_types file path")
-    parser.add_argument("--lr", type=float, default=0.0001, help="adam: learning rate")
+    parser.add_argument("--lr", type=float, default=0.001, help="adam: learning rate")
     parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first order momentum of gradient")
     parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of first order momentum of gradient")
     parser.add_argument("--checkpoint_interval", type=int, default=1000, help="interval between model checkpoints")
@@ -76,7 +78,8 @@ if __name__ == "__main__":
     VAE = Shape_VAE().to('cuda')
 #    encoder = EncoderCNN().to('cuda') 
     encoder = CNN_Encoder().to('cuda')
-    decoder = MolDecoder(512, 1024, vocab_size=107, num_layers=1).to('cuda')
+#    VAE = VAE(use_cuda=True).to('cuda')
+    decoder = MolDecoder(256, 512, vocab_size=107, num_layers=1).to('cuda')
 
     if opt["epoch"] > 0:
         # load saved models
@@ -94,8 +97,10 @@ if __name__ == "__main__":
     # construct optimizers for the networks
     optimizer_VAE = optim.Adam(VAE.parameters(), lr=opt["lr"])
     VAE.train()
-    optimizer_encoder = optim.Adam(encoder.parameters(), lr=0.01)
-    optimizer_decoder = optim.Adam(decoder.parameters(), lr=0.01)
+    caption_params = list(encoder.parameters()) + list(decoder.parameters())
+    caption_optimizer = torch.optim.Adam(caption_params, lr=0.001)
+#    optimizer_encoder = optim.Adam(encoder.parameters(), lr=0.01)
+#    optimizer_decoder = optim.Adam(decoder.parameters(), lr=0.01)
 #    scheduler_decoder = optim.lr_scheduler.ReduceLROnPlateau(optimizer_decoder)
     encoder.train()
     decoder.train()
@@ -104,6 +109,7 @@ if __name__ == "__main__":
     input_tensor = torch.zeros(tensor_shape, dtype=torch.float32, device='cuda')
     caption_loss = 0.
     torch.autograd.set_detect_anomaly(True)
+    loss_file = open("/scratch/shubham/loss.txt", "w")
 
     # train for n_epochs
     for epoch in range(opt["epoch"], opt["epoch"]+opt["n_epochs"]):
@@ -113,10 +119,11 @@ if __name__ == "__main__":
         sdf_files = [extract_sdf_file(gninatype_files[i], opt["data_dir"]) for i in
                 range(opt["batch_size"])]
 
-        input_tensor_modified = input_tensor[:, :14]
+        input_tensor_modified = input_tensor[:, 14:]
         recon_x, mu, logvar = VAE(input_tensor_modified)
-        total_loss, BCE_loss, KLD = VAE.loss(recon_x,
-                    input_tensor_modified, mu, logvar)
+        total_loss = loss_function(recon_x, input_tensor_modified, mu, logvar)
+#        total_loss, BCE_loss, KLD = VAE.loss(recon_x,
+#                    input_tensor_modified, mu, logvar)
 
         if epoch >= opt["cap_start"]:
             selfies = []
@@ -128,23 +135,30 @@ if __name__ == "__main__":
             captions = selfies.cuda()
             packed = pack_padded_sequence(captions, lengths, batch_first=True)
             targets = packed[0]
-            optimizer_decoder.zero_grad()
-            optimizer_encoder.zero_grad()
+            caption_optimizer.zero_grad()
+#            optimizer_decoder.zero_grad()
+#            optimizer_encoder.zero_grad()
             features = encoder(recon_x)
             outputs = decoder(features, captions, lengths)
             caption_loss = cross_entropy_loss(outputs, targets)
             caption_loss.backward(retain_graph=True)
-            optimizer_encoder.step()
-            optimizer_decoder.step()
+            caption_optimizer.step()
+#            optimizer_encoder.step()
+#            optimizer_decoder.step()
 
         optimizer_VAE.zero_grad()
         total_loss.backward()
         optimizer_VAE.step()
 
         cap_loss = caption_loss.item() if type(caption_loss) != float else 0. 
-#        scheduler_decoder.step(cap_loss)
-        print("[Epoch %d/%d] [VAE Loss: %f] [Caption Loss: %f]" %(epoch,
-                    opt["epoch"] + opt["n_epochs"], total_loss.item(), cap_loss))
+        if (epoch + 1)%10 == 0:
+            print("[Epoch %d/%d] [VAE Loss: %f] [Caption Loss: %f]" %(epoch + 1,
+                        opt["epoch"] + opt["n_epochs"], total_loss.item(), cap_loss))
+            sys.stdout.flush()
+            res = "[Epoch %d/%d] [VAE Loss: %f] [Caption Loss: %f]" %(epoch + 1,
+                        opt["epoch"] + opt["n_epochs"], total_loss.item(), cap_loss)
+            loss_file.write(res+'\n')
+            loss_file.flush()
     
         if epoch % opt["checkpoint_interval"] == 0:
             torch.save(VAE.state_dict(), "%s/VAE_%d.pth"
@@ -154,6 +168,7 @@ if __name__ == "__main__":
                         %(opt["save"], epoch))
                 torch.save(decoder.state_dict(), "%s/decoder_%d.pth"
                     %(opt["save"], epoch))
+    loss_file.close()
 #                loss.append(cap_loss)
 #                iters.append(epoch)
 
