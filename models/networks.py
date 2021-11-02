@@ -25,6 +25,10 @@ class Conv_3d_Block(nn.Module):
             self.norm = nn.BatchNorm3d(output_channels)
         elif norm == "in":
             self.norm = nn.InstanceNorm3d(output_channels)
+        elif norm == "adain":
+            self.norm = AdaptiveInstanceNorm3d(output_channels)
+        elif norm == "ln":
+            self.norm = LayerNorm(output_channels)
         else:
             self.norm = None
 
@@ -143,30 +147,131 @@ class MultiDiscriminator(nn.Module):
         return loss
 
 class Decoder(nn.Module):
-    def __init__(self, bottom_dim=32, n_res=3, n_upsample=2, style_dim=8,
+    def __init__(self,channels=32, n_res=3, n_upsample=2, style_dim=8,
             out_channels=14) -> None:
         super().__init__()
         layers = []
-        channels = bottom_dim*(1<<n_upsample)
-        layers += [ResidualBlocks(n_res, bottom_dim, norm="adain")]
+        channels = channels*(1<<n_upsample)
+        layers += [ResidualBlocks(n_res, channels, norm="adain")]
         for _ in range(n_upsample):
             layers += [nn.Upsample(scale_factor=2), Conv_3d_Block(channels,
                 channels//2, 5, 1, 2, norm="ln")]
             channels = channels//2
         layers += [Conv_3d_Block(channels, out_channels, 7, 1, activation="tanh")]
         self.model = nn.Sequential(*layers)
+
+        self.mlp = MLP(style_dim, self.get_num_adain_params())
+
+    def get_num_adain_params(self):
+        """Return the number of AdaIN parameters needed by the model"""
+        num_adain_params = 0
+        for m in self.modules():
+            if m.__class__.__name__ == "AdaptiveInstanceNorm3d":
+                num_adain_params += 2 * m.num_features
+        return num_adain_params
+
+    def assign_adain_params(self, adain_params):
+        """Assign the adain_params to the AdaIN layers in model"""
+        for m in self.modules():
+            if m.__class__.__name__ == "AdaptiveInstanceNorm3d":
+                # Extract mean and std predictions
+                mean = adain_params[:, : m.num_features]
+                std = adain_params[:, m.num_features : 2 * m.num_features]
+                # Update bias and weight
+                m.bias = mean.contiguous().view(-1)
+                m.weight = std.contiguous().view(-1)
+                # Move pointer
+                if adain_params.size(1) > 2 * m.num_features:
+                    adain_params = adain_params[:, 2 * m.num_features :]
     
+    def forward(self, content_code, style_code):
+        adain_params = self.mlp(style_code) 
+        self.assign_adain_params(adain_params)
+        return self.model(content_code)
+
+class MLP(nn.Module):
+    def __init__(self, input_dim, output_dim, dim=256, n_blk=3):
+        super(MLP, self).__init__()
+        layers = [nn.Linear(input_dim, dim), nn.ReLU(inplace=True)]
+        for _ in range(n_blk - 2):
+            layers += [nn.Linear(dim, dim), nn.ReLU(inplace=True)]
+        layers += [nn.Linear(dim, output_dim)]
+        self.model = nn.Sequential(*layers)
+
     def forward(self, x):
+        x = x.view(x.size(0), -1) 
         return self.model(x)
 
+class AdaptiveInstanceNorm3d(nn.Module):
+    """Reference: https://github.com/NVlabs/MUNIT/blob/master/networks.py"""
+
+    def __init__(self, num_features, eps=1e-5, momentum=0.1):
+        super(AdaptiveInstanceNorm3d, self).__init__()
+        self.num_features = num_features
+        self.eps = eps
+        self.momentum = momentum
+        # weight and bias are dynamically assigned
+        self.weight = None
+        self.bias = None
+        # just dummy buffers, not used
+        self.register_buffer("running_mean", torch.zeros(num_features))
+        self.register_buffer("running_var", torch.ones(num_features))
+
+    def forward(self, x):
+        assert (
+            self.weight is not None and self.bias is not None
+        ), "Please assign weight and bias before calling AdaIN!"
+        b, c, h, w, d = x.size()
+        running_mean = self.running_mean.repeat(b)
+        running_var = self.running_var.repeat(b)
+
+        # Apply instance norm
+        x_reshaped = x.contiguous().view(1, b * c, h, w, d)
+
+        out = F.batch_norm(
+            x_reshaped, running_mean, running_var, self.weight, self.bias, True, self.momentum, self.eps
+        )
+
+        return out.view(b, c, h, w, d)
+
+    def __repr__(self):
+        return self.__class__.__name__ + "(" + str(self.num_features) + ")"
+
+class LayerNorm(nn.Module):
+    def __init__(self, num_features, eps=1e-5, affine=True):
+        super(LayerNorm, self).__init__()
+        self.num_features = num_features
+        self.affine = affine
+        self.eps = eps
+
+        if self.affine:
+            self.gamma = nn.Parameter(torch.Tensor(num_features).uniform_())
+            self.beta = nn.Parameter(torch.zeros(num_features))
+
+    def forward(self, x):
+        shape = [-1] + [1] * (x.dim() - 1)
+        mean = x.view(x.size(0), -1).mean(1).view(*shape)
+        std = x.view(x.size(0), -1).std(1).view(*shape)
+        x = (x - mean) / (std + self.eps)
+
+        if self.affine:
+            shape = [1, -1] + [1] * (x.dim() - 2)
+            x = x * self.gamma.view(*shape) + self.beta.view(*shape)
+        return x
 
 if __name__ == "__main__":
     params = {"n_layer": 4, "activ": "lrelu", "num_scales": 1, "pad_type":
             "replicate", "norm": "in", "bottom_dim": 32}
-    content_encoder = StyleEncoder()
+    content_encoder = ContentEncoder()
     x = torch.randn(1, 14, 48, 48, 48)
-    o = content_encoder(x)
-    print(o.shape)
+    content_code = content_encoder(x)
+    print(content_code.shape)
+    style_encoder = StyleEncoder()
+    style_code = style_encoder(x)
+    print(style_code.shape)
+    G = Decoder()
+    gen_x = G(content_code, style_code)
+    print(gen_x.shape)
     D = MultiDiscriminator(params)
     rand_tensor = torch.randn(1, 14, 48, 48, 48)
     out = D(rand_tensor)
