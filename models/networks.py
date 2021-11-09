@@ -104,6 +104,20 @@ class ContentEncoder(nn.Module):
     def forward(self, x):
        return self.model(x)
 
+class Encoder(nn.Module):
+    def __init__(self, input_channels=14, n_downsample_c=2, n_downsample_s=4,
+            bottom_dim=32, n_res=4, style_dim=8) -> None:
+        super().__init__()
+        self.content_encoder = ContentEncoder(input_channels,
+                n_downsample_s, bottom_dim, n_res)
+        self.style_encoder = StyleEncoder(input_channels,
+                n_downsample_s, style_dim, bottom_dim)
+
+    def forward(self, x):
+        content_code = self.content_encoder(x)
+        style_code = self.style_encoder(x)
+        return content_code, style_code
+
 class MultiDiscriminator(nn.Module):
     def __init__(self, params, in_channels=14) -> None:
         super().__init__()
@@ -147,7 +161,7 @@ class MultiDiscriminator(nn.Module):
         return loss
 
 class Decoder(nn.Module):
-    def __init__(self,channels=32, n_res=3, n_upsample=2, style_dim=8,
+    def __init__(self, params=None, channels=32, n_res=3, n_upsample=2, style_dim=8,
             out_channels=14) -> None:
         super().__init__()
         layers = []
