@@ -69,7 +69,8 @@ class ResidualBlocks(nn.Module):
         self.model = nn.Sequential(*layers)
     
     def forward(self, x):
-        return self.model(x)
+        x1 = self.model(x)
+        return x1
 
 class StyleEncoder(nn.Module):
     def __init__(self, in_channels=14, n_downsample=4,
@@ -109,7 +110,7 @@ class Encoder(nn.Module):
             bottom_dim=32, n_res=4, style_dim=8) -> None:
         super().__init__()
         self.content_encoder = ContentEncoder(input_channels,
-                n_downsample_s, bottom_dim, n_res)
+                n_downsample_c, bottom_dim, n_res)
         self.style_encoder = StyleEncoder(input_channels,
                 n_downsample_s, style_dim, bottom_dim)
 
@@ -151,7 +152,6 @@ class MultiDiscriminator(nn.Module):
         outputs = []
         for model in self.models:
             outputs.append(model(x))
-            print(outputs[-1].shape, x.shape)
             x = self.downsample(x)
         return outputs
 
@@ -277,15 +277,15 @@ if __name__ == "__main__":
     params = {"n_layer": 4, "activ": "lrelu", "num_scales": 1, "pad_type":
             "replicate", "norm": "in", "bottom_dim": 32}
     content_encoder = ContentEncoder()
-    x = torch.randn(1, 14, 48, 48, 48)
+    x = torch.randn(1, 14, 24, 24, 24)
     content_code = content_encoder(x)
     print(content_code.shape)
     style_encoder = StyleEncoder()
     style_code = style_encoder(x)
     print(style_code.shape)
-    G = Decoder()
-    gen_x = G(content_code, style_code)
-    print(gen_x.shape)
+#    G = Decoder()
+#    gen_x = G(content_code, style_code)
+#    print(gen_x.shape)
     D = MultiDiscriminator(params)
     rand_tensor = torch.randn(1, 14, 48, 48, 48)
     out = D(rand_tensor)

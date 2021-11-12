@@ -3,6 +3,5 @@ __pycache__
 .ipynb_checkpoints
 loss.csv
 tmp.dx
-utils.py 
 types
 test_scripts/prepare_training_structs.ipynb
