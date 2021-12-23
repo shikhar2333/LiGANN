@@ -9,16 +9,16 @@ import numpy as np
 import os
 import sys
 
+#dir = "/scratch/shubham/zinc"
 def gninatype(dir):
     # creates gninatype pocket_pdb_file for model input
-    j = 1
     for protein_code in os.listdir(dir):
-        print(j,protein_code)
-        pocket_pdb_file = protein_code+"/"+protein_code+"_ligand.sdf"
+        print(protein_code)
+        pocket_pdb_file = protein_code+"/"+protein_code+".sdf"
         f=open(dir+"/"+pocket_pdb_file.replace('.sdf','.types'),'w')
         f.write(dir+"/"+pocket_pdb_file)
         f.close()
-        atom_map=molgrid.FileMappedGninaTyper('gninamap')
+        atom_map=molgrid.defaultGninaLigandTyper
         dataloader=molgrid.ExampleProvider(atom_map,shuffle=False,default_batch_size=1)
         train_types=pocket_pdb_file.replace('.sdf','.types')
         dataloader.populate(dir+"/"+train_types)
@@ -31,7 +31,6 @@ def gninatype(dir):
             # print(i+1,coords[i][0],coords[i][1],coords[i][2],types[i])
             fout.write(struct.pack('fffi',coords[i][0],coords[i][1],coords[i][2],types[i]))
         fout.close()
-        j += 1
         os.remove(dir+"/"+train_types)
     # return pocket_pdb_file.replace('.sdf','.gninatypes')
 

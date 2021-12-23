@@ -2,6 +2,14 @@ from torch import nn
 import torch
 import torch.nn.functional as F
 
+cfg = {
+    'vgg11': [64, 'M', 128, 'M', 256, 256, 'M'],
+    'vgg13': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
+    'vgg16': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
+    'vgg19': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
+    'vgg19cut': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'N'],
+}
+
 class Conv_3d_Block(nn.Module):
     def __init__(self, input_channels, output_channels, k_size, s,
             p=3, norm='none', activation="relu", pad_type="replicate") -> None:
@@ -69,25 +77,28 @@ class ResidualBlocks(nn.Module):
         self.model = nn.Sequential(*layers)
     
     def forward(self, x):
-        return self.model(x)
+        x1 = self.model(x)
+        return x1
 
 class StyleEncoder(nn.Module):
-    def __init__(self, in_channels=14, n_downsample=4,
-            style_dim=8, bottom_dim=32):
+    def __init__(self, in_channels=14, style_dim=128, bottom_dim=32):
         super().__init__()
-        self.model = []
-        self.model += [Conv_3d_Block(in_channels, bottom_dim, 7, 1)]
-        for _ in range(2):
-            self.model += [Conv_3d_Block(bottom_dim, 2*bottom_dim, 4, 2, 1)]
-            bottom_dim *= 2
-        for _ in range(n_downsample - 2):
-            self.model += [Conv_3d_Block(bottom_dim, bottom_dim, 4, 2, 1)]
-        self.model += [nn.AdaptiveAvgPool3d(1)]
-        self.model += [nn.Conv3d(bottom_dim, style_dim, 1, 1, 0)]
-        self.final_model = nn.Sequential(*self.model)
+        layers = []
+        for v in cfg["vgg11"]:
+            if v == "M":
+                layers += [nn.MaxPool3d(kernel_size=2, stride=2)]
+            else:
+                layers += [nn.Conv3d(in_channels, v, kernel_size=3, padding=1),
+                        nn.BatchNorm3d(v), nn.ReLU(inplace=False)]
+                in_channels = v
+        self.features = nn.Sequential(*layers)
+        self.fc = nn.Linear(256, style_dim)
 
     def forward(self, x):
-        return self.final_model(x)
+        x = self.features(x)
+        x = F.adaptive_avg_pool3d(x, (1, 1, 1))
+        flat = x.view(x.size(0), -1)
+        return self.fc(flat)
 
 class ContentEncoder(nn.Module):
     def __init__(self, input_channels=14, n_downsample=2, bottom_dim=32, n_res=4):
@@ -105,13 +116,13 @@ class ContentEncoder(nn.Module):
        return self.model(x)
 
 class Encoder(nn.Module):
-    def __init__(self, input_channels=14, n_downsample_c=2, n_downsample_s=4,
-            bottom_dim=32, n_res=4, style_dim=8) -> None:
+    def __init__(self, input_channels=14, n_downsample_c=2,
+            bottom_dim=32, n_res=4, style_dim=128) -> None:
         super().__init__()
         self.content_encoder = ContentEncoder(input_channels,
-                n_downsample_s, bottom_dim, n_res)
+                n_downsample_c, bottom_dim, n_res)
         self.style_encoder = StyleEncoder(input_channels,
-                n_downsample_s, style_dim, bottom_dim)
+                style_dim, bottom_dim)
 
     def forward(self, x):
         content_code = self.content_encoder(x)
@@ -151,7 +162,6 @@ class MultiDiscriminator(nn.Module):
         outputs = []
         for model in self.models:
             outputs.append(model(x))
-            print(outputs[-1].shape, x.shape)
             x = self.downsample(x)
         return outputs
 
@@ -277,15 +287,15 @@ if __name__ == "__main__":
     params = {"n_layer": 4, "activ": "lrelu", "num_scales": 1, "pad_type":
             "replicate", "norm": "in", "bottom_dim": 32}
     content_encoder = ContentEncoder()
-    x = torch.randn(1, 14, 48, 48, 48)
+    x = torch.randn(1, 14, 24, 24, 24)
     content_code = content_encoder(x)
     print(content_code.shape)
     style_encoder = StyleEncoder()
     style_code = style_encoder(x)
     print(style_code.shape)
-    G = Decoder()
-    gen_x = G(content_code, style_code)
-    print(gen_x.shape)
+#    G = Decoder()
+#    gen_x = G(content_code, style_code)
+#    print(gen_x.shape)
     D = MultiDiscriminator(params)
     rand_tensor = torch.randn(1, 14, 48, 48, 48)
     out = D(rand_tensor)

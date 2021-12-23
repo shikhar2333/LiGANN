@@ -7,9 +7,9 @@ global_alphabet = ['pad', 'start', 'end', '[#C]', '[#N]', '[/B]', '[/Br]', '[/C@
 global_pad_to_len = 183
 global_symbol_to_idx = {s: i for i, s in enumerate(global_alphabet)}
 
-def encode_selfies(selfies):
+def encode_selfies(selfies, input_tensor):
     lenghts = [sf.len_selfies(s) + 2 for s in selfies]
-    print(lenghts)
+    # print(lenghts)
     lenghts = np.array(lenghts)
     indices = np.argsort(lenghts)[::-1]
     lenghts = lenghts[indices]
@@ -19,7 +19,7 @@ def encode_selfies(selfies):
         symbols = sf.split_selfies(selfie)
         selfie_temp = [1] + [global_symbol_to_idx[symbol] for symbol in symbols] + [2]
         encoded_selfies[i, :len(selfie_temp)] = selfie_temp
-    return torch.tensor(encoded_selfies).long(), lenghts
+    return input_tensor[list(indices)], torch.tensor(encoded_selfies).long(), lenghts 
 
 if __name__ == "__main__":
     dataset = []
