@@ -35,6 +35,7 @@ def get_gmaker_eproviders(opt):
     print("ligand, pocket channels: ", e_ligand.num_types(),
             e_pocket.num_types())
 #     gmaker = molgrid.GridMaker()
+#    gmaker = molgrid.GridMaker()
     dims = gmaker.grid_dimensions(e_ligand.num_types())
     return e_ligand, e_pocket, gmaker, dims
 
@@ -63,6 +64,7 @@ def recon_loss(target, input):
 
 if __name__ == "__main__":
     # Loss functions
+    recon_loss = nn.L1Loss()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 #    recon_loss = nn.L1Loss().to(device)
     prev_time = time.time()
@@ -82,6 +84,10 @@ if __name__ == "__main__":
             from which lr decay starts""")
 
     parser.add_argument('--clip_gradients', type=float, default=10.0, help="Clip gradients threshold (default 10)")
+
+    parser.add_argument("--lr_policy", default="step", help="""Policy for lr scheduling""")
+    parser.add_argument("--gamma", type=float, default=0.5, help="""factor by which lr decays""")
+    parser.add_argument("--step_size", type=int, default=100, help="""how often to decay learning rate""")
 
     parser.add_argument("--lambda_recons", type=float, default=1, help="""style
             reconstruction weight""")
@@ -105,19 +111,16 @@ if __name__ == "__main__":
 
     opt = vars(parser.parse_args())
     os.makedirs(opt["save"], exist_ok=True)
-    os.makedirs("/scratch/shubham/grids", exist_ok=True)
     e_ligand, e_pocket, gmaker, dims = get_gmaker_eproviders(opt)
 
     tensor_shape = (opt["batch_size"], ) + dims
-    lig_tensor = torch.zeros(tensor_shape, dtype=torch.float32).to(device)
-    pocket_tensor = torch.zeros(tensor_shape, dtype=torch.float32).to(device)
+    lig_tensor = torch.zeros(tensor_shape, dtype=torch.float32, device='cuda')
+    pocket_tensor = torch.zeros(tensor_shape, dtype=torch.float32, device='cuda')
     print("tensor shape: ", tensor_shape)
 
     # Initialising Encoder, Decoder and Discriminator networks
-    E1 = Encoder(n_res=4, style_dim=128).to(device)
-    E2 = Encoder(n_res=4, style_dim=128).to(device)
-    G1, G2 = Decoder(n_res=3, style_dim=128).to(device), Decoder(n_res=3,
-            style_dim=128).to(device)
+    E1, E2 = Encoder(n_downsample_s=2, n_res=2).to(device), Encoder(n_downsample_s=2, n_res=2).to(device)
+    G1, G2 = Decoder(n_res=2).to(device), Decoder(n_res=2).to(device)
     total_params, train_params = return_params(E1)
     print("Total params for E1: ", total_params, "Trainable params for E1: ",
             train_params)
@@ -131,11 +134,6 @@ if __name__ == "__main__":
     total_params, train_params = return_params(D1)
     print("Total params for D1: ", total_params, "Trainable params for D1: ",
             train_params)
-
-    E1 = nn.DataParallel(E1)
-    E2 = nn.DataParallel(E2)
-    G1 = nn.DataParallel(G1)
-    G2 = nn.DataParallel(G2)
 
     if opt["epoch"] > 0:
         E1.load_state_dict(torch.load("%s/Enc1_%d.pth" %(opt["save"],
@@ -166,15 +164,9 @@ if __name__ == "__main__":
     optimizer_D2 = optim.Adam(D2.parameters(), lr=opt["lr"], betas=(opt["b1"], opt["b2"]))
 
     # LR Schedulers
-#    lr_scheduler_G = optim.lr_scheduler.LambdaLR(optimizer_G,
-#            lr_lambda=LambdaLR(opt["n_epochs"], opt["epoch"],
-#                opt["decay_epoch"]).step)
-#    lr_scheduler_D1 = optim.lr_scheduler.LambdaLR(optimizer_D1,
-#            lr_lambda=LambdaLR(opt["n_epochs"], opt["epoch"],
-#                opt["decay_epoch"]).step)
-#    lr_scheduler_D2 = optim.lr_scheduler.LambdaLR(optimizer_D2,
-#            lr_lambda=LambdaLR(opt["n_epochs"], opt["epoch"],
-#                opt["decay_epoch"]).step)
+    lr_scheduler_G = get_scheduler(optimizer_G, opt)
+    lr_scheduler_D1 = get_scheduler(optimizer_D1, opt)
+    lr_scheduler_D2 = get_scheduler(optimizer_D2, opt)
 
     real, fake = 1, 0
     real_D = 0.9
@@ -188,60 +180,47 @@ if __name__ == "__main__":
 #        print("input size: ", pocket_tensor.size())
 
         # sample style codes from unit gaussian
-        style_pocket = Variable(torch.randn(pocket_tensor.size(0), 128, 1, 1,
-            1).cuda())
-        style_ligand = Variable(torch.randn(lig_tensor.size(0), 128, 1, 1,
-            1).cuda())
+        style_1 = torch.randn(pocket_tensor.size(0), 8, 1, 1, 1,
+                requires_grad=True).to(device)
+        style_2 = torch.randn(lig_tensor.size(0), 8, 1, 1, 1,
+                requires_grad=True).to(device)
 
         optimizer_G.zero_grad()
-
-        # 1 denotes pocket, 2 denotes ligand
-
-        content_pocket, style_pocket_prime = E1(pocket_tensor)
-        content_ligand, style_ligand_prime = E2(lig_tensor)
+        c1, s1 = E1(pocket_tensor)
+        c2, s2 = E2(lig_tensor)
+#        print("Style shape: ", s1.size(), "Content shape: ", c1.size())
 
         # Reconstruct the voxels
-        recon_pocket_batch = G1(content_pocket, style_pocket_prime)
-        recon_lig_batch = G2(content_ligand, style_ligand_prime)
+        recon_pocket_batch = G1(c1, s1)
+        recon_lig_batch = G2(c2, s2)
+#        print("Reconstructed Pocket size: ", recon_pocket_batch.size(),
+#                "Reconstructed Ligand size: ", recon_lig_batch.size())
 
         # Translate voxels
-        lig_to_pocket = G1(content_ligand, style_pocket)
-        pocket_to_lig = G2(content_pocket, style_ligand)
+        lig_to_pocket = G1(c2, style_1)
+        pocket_to_lig = G2(c1, style_2)
+#        print("Translated sizes: ", lig_to_pocket.size(), pocket_to_lig.size())
 
         # Cyclic Translation
         c_recon_pocket, s_recon_ligand = E2(pocket_to_lig)
         c_recon_ligand, s_recon_pocket = E1(lig_to_pocket)
 
-        cycle_recon_pocket = G1(c_recon_pocket, style_pocket_prime) if opt["lamda_cycle"] > 0 else 0
-        cycle_recon_lig = G2(c_recon_ligand, style_ligand_prime) if opt["lamda_cycle"] > 0 else 0
-#        for name,param in E1.named_parameters():
-#            if param.requires_grad and "style" in name:
-#               print(name,param.data)
-#        style_pocket_reshaped = style_pocket.view(pocket_tensor.size(0), 8)
-#        style_pocket_reshaped_recon = s_recon_pocket.view(pocket_tensor.size(0), 8)
-#        print(style_pocket_reshaped)
-#        print(style_pocket_reshaped_recon)
+        cycle_recon_pocket = G1(c_recon_12, s1) if opt["lamda_cycle"] > 0 else 0
+        cycle_recon_lig = G2(c_recon_21, s2) if opt["lamda_cycle"] > 0 else 0
 
         # Losses
-        pocket_recon_loss = recon_loss(recon_pocket_batch,
-                pocket_tensor)*opt["lambda_reconx"]
+        pocket_recon_loss = recon_loss(recon_pocket_batch, pocket_tensor)
         lig_recon_loss = recon_loss(recon_lig_batch, lig_tensor)*opt["lambda_reconx"]
-        s1_loss = recon_loss(s_recon_pocket, style_pocket)*opt["lambda_recons"]
-        s2_loss = recon_loss(s_recon_ligand, style_ligand)*opt["lambda_recons"]
-        c1_loss = recon_loss(c_recon_ligand, content_ligand)*opt["lambda_reconc"]
-        c2_loss = recon_loss(c_recon_pocket, content_pocket)*opt["lambda_reconc"]
+        s1_loss = recon_loss(s_recon_21, style_1)*opt["lambda_recons"]
+        s2_loss = recon_loss(s_recon_12, style_2)*opt["lambda_recons"]
+        c1_loss = recon_loss(c_recon_21, c2.detach())*opt["lambda_reconc"]
+        c2_loss = recon_loss(c_recon_12, c1.detach())*opt["lambda_reconc"]
         gan_loss_1 = D1.compute_loss(lig_to_pocket, real) 
         gan_loss_2 = D2.compute_loss(pocket_to_lig, real)
         cycle_loss_1 = recon_loss(cycle_recon_pocket,
                 pocket_tensor)*opt["lamba_cycle"] if opt["lamda_cycle"] > 0 else 0
         cycle_loss_2 = recon_loss(cycle_recon_lig,
                 lig_tensor)*opt["lamba_cycle"] if opt["lamda_cycle"] > 0 else 0
-
-        print("[Recon losses]: %f %f %f %f %f %f [Gan losses: %f %f]"
-                %(pocket_recon_loss.item(), lig_recon_loss.item(),
-                    s1_loss.item(), s2_loss.item(), c1_loss.item(),
-                    c2_loss.item(),
-                    gan_loss_1, gan_loss_2))
 
         total_loss = (
                 pocket_recon_loss
@@ -265,28 +244,28 @@ if __name__ == "__main__":
 
         # Train Discriminator 1
         optimizer_D1.zero_grad()
-        loss_D1 = D1.compute_loss(pocket_tensor, real_D) + D1.compute_loss(lig_to_pocket.detach(), fake)
+        loss_D1 = D1.compute_loss(pocket_tensor, real) + D1.compute_loss(lig_to_pocket.detach(), fake)
         loss_D1.backward()
         nn.utils.clip_grad_norm_(D1.parameters(), opt["clip_gradients"])
         optimizer_D1.step()
 
         # Train Discriminator 2
         optimizer_D2.zero_grad()
-        loss_D2 = D2.compute_loss(lig_tensor, real_D) + D2.compute_loss(pocket_to_lig.detach(), fake)
+        loss_D2 = D2.compute_loss(lig_tensor, real) + D2.compute_loss(pocket_to_lig.detach(), fake)
         loss_D2.backward()
         nn.utils.clip_grad_norm_(D2.parameters(), opt["clip_gradients"])
         optimizer_D2.step()
 
-#        print(
-#            "[Epoch %d/%d] [Gen Loss: %f] [Dis Loss %f]" %(epoch, opt["n_epochs"], total_loss.item(), (loss_D1 + loss_D2).item() ) 
-#        ) 
+        print(
+            "[Epoch %d/%d] [Gen Loss: %f] [Dis Loss %f]" %(epoch, opt["n_epochs"], total_loss.item(), (loss_D1 + loss_D2).item() ) 
+        ) 
 
-#        lr_scheduler_G.step()
-#        lr_scheduler_D1.step()
-#        lr_scheduler_D2.step()
-
-#        if epoch % opt["sample_interval"] == 0:
-#            sample_grids(e_pocket_test=e_pocket, dims=dims, gmaker=gmaker)
+        if lr_scheduler_G:
+            lr_scheduler_G.step()
+        if lr_scheduler_D1:
+            lr_scheduler_D1.step()
+        if lr_scheduler_D2:
+            lr_scheduler_D2.step()
         
         if epoch % opt["checkpoint_interval"] == 0:
             torch.save(E1.state_dict(), "%s/Enc1_%d.pth" %(opt["save"],
