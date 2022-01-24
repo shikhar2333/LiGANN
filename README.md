@@ -36,6 +36,12 @@ conda env create -f environment.yml
 - [x] Add code for beam search to generate smile representations.
 - [x] Incorporate selfies representations instead of using smiles.
 - [x] Add attention mechanism to the existing MolDecoder model.
+- [ ] Dataset preparation and filtering
+- [ ] Latent Interpolation
+- [ ] Tanimoto similarity
+- [ ] Property count
+- [ ] Add wandb (loss statistics)
+- [ ] Moses
 
 ## Note:
 ```
